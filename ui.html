@@ -236,6 +236,26 @@ const SPEC = [
 ];
 const PKEYS = SPEC.flatMap(g => g[1].map(x => x[0]));
 
+/* ---------------- 全局错误横幅 ----------------
+   前端这类 bug 只在控制台报错、页面上表现为"某几块莫名其妙是空的"，极难发现。
+   这里把任何未捕获异常/未处理拒绝直接显示在页面顶部，让它一眼可见。 */
+(function installErrorBanner(){
+  const bar = document.createElement('div');
+  bar.style.cssText = 'position:fixed;left:0;right:0;top:0;z-index:9999;background:#7f1d1d;' +
+    'color:#fff;padding:7px 12px;font:12px/1.5 monospace;display:none;white-space:pre-wrap';
+  document.body.appendChild(bar);
+  let count = 0;
+  function show(msg){
+    count++;
+    bar.style.display = 'block';
+    bar.textContent = '页面脚本出错 x' + count + '：' + msg +
+      '   （请把这条截图反馈；出现它时页面部分面板会停止更新）';
+  }
+  window.addEventListener('error', e => show((e.message || '未知错误') +
+    (e.lineno ? '  @行' + e.lineno : '')));
+  window.addEventListener('unhandledrejection', e => show('Promise: ' + (e.reason || '')));
+})();
+
 /* ---------------- 状态 ---------------- */
 const H = 600;
 let hist = [], lastSeq = 0, running = true, startedAt = null, tPrev = 0;
@@ -357,10 +377,12 @@ function push(s){
   gt.className = 'pill ' + (ll.think_mode === 'kwargs' ? 'g' : 'w');
 
   // 对话模式：主动 vs 强制回复
-  const forced = (state.reply_mode || 0) > 0.5;
+  // 注意：这里的形参是 s，不是 state —— 写成 state 会抛 ReferenceError，
+  // 而且它发生在图表画完之后、事件渲染之前，表现就是"图表在动但对话/思维全空"。
+  const forced = (s.reply_mode || 0) > 0.5;
   const dlg = document.getElementById('s_dialogue');
   dlg.textContent = forced
-    ? ('强制回复模式' + (state.unanswered ? ' · 待回复 ' + state.unanswered : ' · 已回完'))
+    ? ('强制回复模式' + (s.unanswered ? ' · 待回复 ' + s.unanswered : ' · 已回完'))
     : '主动模式：消息只当刺激，不保证它回应';
   dlg.className = forced ? 'tag g' : 'tag';
 

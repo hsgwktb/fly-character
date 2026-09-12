@@ -166,6 +166,8 @@ class FlyLLM:
             t0 = time.time()
             try:
                 res = self._generate(job)
+                if res.get("ok"):
+                    self.last_error = ""          # 成功后清掉旧的报错, 否则会一直挂着误导
             except Exception as e:
                 res = {"ok": False, "err": repr(e)[:200], "job": job}
                 self.last_error = res["err"]
@@ -179,9 +181,11 @@ class FlyLLM:
 
     def _generate(self, job: dict) -> dict:
         packet = job["packet"]
-        use_think = job["allow_think"] and self.think_mode != "kwargs"
+        # 闸门实测：chat_template_kwargs.enable_thinking 有效（/no_think 无效）
+        # 所以显式传 True/False，而不是靠分支绕开 —— 否则 think=1 会被永久禁用。
+        use_think = bool(job["allow_think"])
         max_tok = 4096 if use_think else 400
-        sysmsg = SYSTEM if (use_think or self.think_mode == "on") else SYSTEM + " /no_think"
+        sysmsg = SYSTEM if use_think else SYSTEM + " /no_think"
 
         payload = {
             "model": self.model,
@@ -190,14 +194,8 @@ class FlyLLM:
             "max_tokens": max_tok,
             "temperature": 0.85,
             "top_p": 0.9,
+            "chat_template_kwargs": {"enable_thinking": use_think},
         }
-        if not use_think:
-            if self.think_mode == "kwargs":
-                payload["chat_template_kwargs"] = {"enable_thinking": False}
-            elif self.think_mode == "no_think":
-                pass                       # 已在 system prompt 里加了 /no_think
-            else:
-                payload["chat_template_kwargs"] = {"enable_thinking": False}
         return self._post_and_parse(payload)
 
     def _post_and_parse(self, payload: dict) -> dict:

@@ -1,0 +1,1 @@
+print("PONG", flush=True)

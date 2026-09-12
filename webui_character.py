@@ -205,6 +205,7 @@ class Char:
         self.llm_consumed = 0
         self.llm_discarded = 0
         self.n_act = 0; self.n_grounded = 0; self.fps = 0.0
+        self.act_hist = {}            # 行为分布(消融对照要用)
         self.rng = np.random.default_rng(7)
         self.params = dict(gain=0.65, steps=15, hab=0.7, lo=0.10, hi=0.40,
                            mh=1.0, mt=1.0, mb=1.0, ml=1.0, mc=1.0, soc=0.0,
@@ -406,6 +407,7 @@ class Char:
                 best, bs, bsrc = name, sc, src
         if best:
             self.n_act += 1
+            self.act_hist[best] = self.act_hist.get(best, 0) + 1
             if bsrc == "connectome":
                 self.n_grounded += 1; self.hab[best] = min(1.0, self.hab[best] + 0.35)
                 self.ev("act", "%s  <span class='badge g'>连接组</span>" % best)
@@ -523,6 +525,9 @@ def snapshot(since):
             "interest": round(c.interest, 3),
             "ro": {k: round(v, 2) for k, v in c.ro.items()},
             "n_act": c.n_act, "n_grounded": c.n_grounded,
+            "actions": dict(c.act_hist),
+            "affect": {"valence": round(c.aff["valence"], 3),
+                       "arousal": round(c.aff["arousal"], 3)},
             "llm": LLM.stats(),
             "thoughts": list(c.thoughts)[-6:],
             "says": list(c.says)[-6:],
@@ -583,7 +588,9 @@ class H(BaseHTTPRequestHandler):
             self._send(200, b'{"ok":true}')
         elif self.path == "/api/reset":
             with LOCK:
+                keep = dict(CH.params)      # 重置时要保留界面设的参数, 否则消融开关会被抹掉
                 CH.__init__()
+                CH.params.update(keep)
             self._send(200, b'{"ok":true}')
         elif self.path == "/api/say":
             # 外部消息进入身体当刺激, 不直接触发 LLM

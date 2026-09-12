@@ -70,6 +70,10 @@ SYSTEM = (
     "appraisal 是你对当前处境的主观评估：novelty=有多新鲜，threat=有多危险，control=你觉得自己能不能应付。"
 )
 
+# 强制回复模式追加在对方那句话之后的指令。与 SYSTEM 一样，可在 WebUI 齿轮面板里改。
+REPLY_SUFFIX = ("你必须回一句 —— 用你果蝇的身份回它，"
+                "可以短、可以不耐烦、可以答非所问，但 say 不能为空。")
+
 
 class FlyLLM:
     """非阻塞 LLM 客户端：put 即返回，后台线程生成，poll 取最新未过期结果。"""
@@ -80,6 +84,9 @@ class FlyLLM:
                     "http://127.0.0.1:8081/v1")).rstrip("/")
         self.key = api_key or os.environ.get("FLY_LLM_KEY", "") or self._read_key()
         self.model = model
+        # 提示词可在 WebUI 齿轮面板热覆盖（见 webui_character.py），改完不用重启进程。
+        self.system_prompt = SYSTEM
+        self.reply_prompt = REPLY_SUFFIX
         self.deadline = deadline
         self.timeout = timeout
         self.think_mode = self._detect_think_mode()
@@ -191,13 +198,13 @@ class FlyLLM:
         # 所以显式传 True/False，而不是靠分支绕开 —— 否则 think=1 会被永久禁用。
         use_think = bool(job["allow_think"])
         max_tok = 4096 if use_think else 400
-        sysmsg = SYSTEM if use_think else SYSTEM + " /no_think"
+        base = self.system_prompt or SYSTEM
+        sysmsg = base if use_think else base + " /no_think"
         # 强制回复模式：明确告诉它有人在说话、必须回一句
         reply_to = (packet or {}).get("reply_to")
         if reply_to:
-            sysmsg += ("\n刚才有东西在对你说：「" + str(reply_to)[:120] +
-                       "」。你必须回一句 —— 用你果蝇的身份回它，"
-                       "可以短、可以不耐烦、可以答非所问，但 say 不能为空。")
+            sysmsg += ("\n刚才有东西在对你说：「" + str(reply_to)[:120] + "」。"
+                       + (self.reply_prompt or REPLY_SUFFIX))
 
         payload = {
             "model": self.model,

@@ -61,6 +61,8 @@ const mk = id => (reg[id] = Object.assign(new El(), {id}));
 ['s_t','s_up','s_fps','s_share','s_int','s_sex','s_ci','s_llm','s_gate','s_actn','s_evn',
  's_paramsrc','s_dialogue','c_drv','c_spk','c_rd','c_int','c_court','drv_bars','ro_bars',
  'act_bars','chat','think','log','cogkv','say','b_say','b_run','b_reset','b_export','controls',
+ 'b_gear','gearwin','gwt','gwb','b_gwclose','p_system','p_channel','p_reply','b_psave','b_preset',
+ 'p_saved','slots','p_file',
 ].forEach(mk);
 // 滑块由 buildControls() 生成，假环境要预注册
 ['gain','steps','hab','lo','hi','mh','mt','mb','mi','ml','mc','soc','sr','kp','ada',
@@ -89,6 +91,11 @@ const state = {
   params: Object.fromEntries([...['gain','steps','hab','lo','hi','mh','mt','mb','mi','ml','mc','soc',
         'sr','kp','ada','use','think','reply','run'].map((k, i) => [k, i === 0 ? 0.65 : 0])]),
   seq: 6, reply_mode: 1, unanswered: 1,
+  prompts: {system: '你是一只果蝇。{"thought": "", "say": ""}', channel: '只输出一个很短的中文句子。',
+            reply: '你必须回一句 —— 用你果蝇的身份回它。'},
+  templates: [null, {name: '模板B', system: 'S2{"thought":1}', channel: 'C2', reply: 'R2'},
+              null, null, null],
+  prompts_file: '/content/fly/prompts.json',
   says: [{t: 100, say: '饿。'}], thoughts: [{t: 100, thought: '想吃。'}],
   heard: [{t: 99, text: '你在干嘛？'}],
   events: [
@@ -105,7 +112,7 @@ const state = {
 const sandbox = {
   document, devicePixelRatio: 1, console,
   Blob: class {}, URL: {createObjectURL: () => 'blob:x', revokeObjectURL: () => {}},
-  setTimeout: () => 0, fetch: () => new Promise(() => {}),
+  setTimeout: () => 0, clearTimeout: () => {}, fetch: () => new Promise(() => {}),
   addEventListener: () => {},
   Date, JSON, Math, Object, Array, String, Number, Error, RegExp,
 };
@@ -143,6 +150,28 @@ if (!rc) {
   }
   if (!(reg.cogkv.innerHTML || '').length) { console.error('✗ cogkv 未渲染'); rc = 1; }
   else console.log('✓ 认知面板已渲染');
+
+  // 齿轮面板：三段落入输入框 + 5 个模板槽渲染 + 二次 push 不许覆盖输入框
+  const psys = reg.p_system.value || '';
+  const okSys = psys.indexOf('果蝇') >= 0 && (reg.p_channel.value || '').length > 0
+             && (reg.p_reply.value || '').length > 0;
+  console.log((okSys ? '✓' : '✗') + ' 三段提示词已灌入输入框（system=' +
+              JSON.stringify(psys.slice(0, 12)) + '）');
+  if (!okSys) rc = 1;
+
+  const nslot = reg.slots.childElementCount;
+  console.log((nslot === 5 ? '✓' : '✗') + ' 模板槽 = ' + nslot + '（期望 5）');
+  if (nslot !== 5) rc = 1;
+  const row1 = reg.slots.children[1];
+  const nm1 = row1 && row1.children[1] ? row1.children[1].value : '';
+  console.log((nm1 === '模板B' ? '✓' : '✗') + ' 模板名回填 = ' + JSON.stringify(nm1));
+  if (nm1 !== '模板B') rc = 1;
+
+  state.prompts.system = 'CHANGED-BY-POLL';
+  sandbox.push(state);
+  const stillSame = reg.p_system.value === psys;
+  console.log((stillSame ? '✓' : '✗') + ' 二次 push 未覆盖输入框（防轮询抹掉正在输入的内容）');
+  if (!stillSame) rc = 1;
 }
 
 console.log(rc ? '\n冒烟测试失败' : '\n冒烟测试通过');

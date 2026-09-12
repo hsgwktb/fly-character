@@ -87,6 +87,33 @@
   .kv{display:grid;grid-template-columns:auto 1fr;gap:3px 10px;font-size:11.5px;color:var(--dim)}
   .kv b{color:var(--fg);font-weight:600;font-variant-numeric:tabular-nums}
   details summary{cursor:pointer;color:var(--dim);font-size:11px;outline:none}
+
+  /* ---- 齿轮：提示词设置漂浮窗 ---- */
+  #b_gear{padding:5px 9px;font-size:14px;line-height:1}
+  .gearwin{position:fixed;top:50px;right:14px;width:440px;max-width:calc(100vw - 24px);
+           background:var(--panel);border:1px solid var(--acc);border-radius:10px;z-index:60;
+           box-shadow:0 14px 40px rgba(0,0,0,.6);display:flex;flex-direction:column;
+           max-height:calc(100vh - 66px)}
+  .gearwin[hidden]{display:none}
+  .gwt{display:flex;align-items:center;gap:8px;padding:8px 11px;border-bottom:1px solid var(--line);
+       cursor:move;user-select:none;font-size:12px;font-weight:650}
+  .gwt .gwsp{flex:1}
+  .gwb{padding:11px;overflow-y:auto}
+  .gwb label{display:block;font-size:11.5px;color:var(--dim);margin:10px 0 3px}
+  .gwb label:first-child{margin-top:0}
+  .gwb textarea{width:100%;min-height:104px;resize:vertical;background:var(--panel2);
+                border:1px solid var(--line);color:var(--fg);border-radius:6px;padding:7px 9px;
+                font-size:12px;line-height:1.5;font-family:ui-monospace,Consolas,monospace}
+  .gwb textarea.short{min-height:50px}
+  .gwrow{display:flex;align-items:center;gap:8px;margin-top:11px;flex-wrap:wrap}
+  .gwsep{margin:15px 0 8px;padding-top:10px;border-top:1px solid var(--line);
+         font-size:11px;color:var(--acc);font-weight:600}
+  .slot{display:grid;grid-template-columns:20px 1fr auto auto auto;gap:6px;
+        align-items:center;margin-bottom:6px}
+  .slot .no{color:var(--dim);font-size:11px;text-align:center}
+  .slot input{width:100%;padding:4px 7px}
+  .slot.empty input{color:#5b6474}
+  .gwhint{color:var(--dim);font-size:10.5px;margin-top:9px;line-height:1.5}
 </style>
 </head>
 <body>
@@ -105,6 +132,7 @@
   <button id="b_run" class="pri">暂停</button>
   <button id="b_reset">重置</button>
   <button id="b_export">导出痕迹</button>
+  <button id="b_gear" title="提示词设置">⚙</button>
 </header>
 
 <main>
@@ -203,6 +231,28 @@
     </div>
   </div>
 </main>
+
+<!-- ============ 齿轮：提示词设置（漂浮窗，标题栏可拖动） ============ -->
+<div id="gearwin" class="gearwin" hidden>
+  <div class="gwt" id="gwt"><span>⚙ 提示词设置</span><span class="gwsp"></span>
+    <button id="b_gwclose" title="关闭">✕</button></div>
+  <div class="gwb">
+    <label>系统提示词 — 决定「它是谁」（保存后立即生效）</label>
+    <textarea id="p_system" spellcheck="false"></textarea>
+    <label>通道提示词 — /api/probe 直连测试用的那一句</label>
+    <textarea id="p_channel" class="short" spellcheck="false"></textarea>
+    <label>强制回复提示词 — 会紧接着对方那句话之后发给它</label>
+    <textarea id="p_reply" class="short" spellcheck="false"></textarea>
+    <div class="gwrow">
+      <button id="b_psave" class="pri">保存并生效</button>
+      <button id="b_preset">恢复默认</button>
+      <span id="p_saved" class="note"></span>
+    </div>
+    <div class="gwsep">模板存档（5 个空位）</div>
+    <div id="slots"></div>
+    <div class="gwhint" id="p_file"></div>
+  </div>
+</div>
 
 <script>
 /* ---------------- 参数规格：分组 + 范围，UI 由它生成 ---------------- */
@@ -334,6 +384,7 @@ const RO   = [['eat','MN9 进食','#4ea1ff'],['flee','DNp01 逃逸','#ff6b6b'],
 
 /* ---------------- 主循环 ---------------- */
 function push(s){
+  syncPromptsOnce(s);
   hist.push(s); if (hist.length > H) hist.shift();
   if (startedAt === null) startedAt = Date.now();
 
@@ -495,6 +546,124 @@ function syncParams(p){
   }
   document.getElementById('s_paramsrc').textContent = '（界面改动即时下发）';
 }
+/* ---------------- 齿轮：提示词设置 ---------------- */
+const gw = document.getElementById('gearwin');
+const GTA = {system: document.getElementById('p_system'),
+             channel: document.getElementById('p_channel'),
+             reply: document.getElementById('p_reply')};
+let slotsCache = [null, null, null, null, null];
+let promptsSynced = false;
+
+function readPrompts(){ const o = {}; for (const k in GTA) o[k] = GTA[k].value; return o; }
+
+function ctlPost(body, done){
+  fetch('/api/control', {method:'POST', headers:{'Content-Type':'application/json'},
+                         body: JSON.stringify(body)})
+    .then(r => r.json()).then(j => { if (done) done(j); }).catch(() => {});
+}
+
+function flash(msg, warn){
+  const el = document.getElementById('p_saved');
+  el.textContent = msg;
+  el.style.color = warn ? 'var(--warn)' : 'var(--ok)';
+  clearTimeout(flash._t);
+  flash._t = setTimeout(() => { el.textContent = ''; }, 3200);
+}
+
+/* 服务器回包是唯一权威来源，整体采用（含模板） */
+function adoptPrompts(j){
+  if (!j) return;
+  if (j.prompts) for (const k in GTA) GTA[k].value = j.prompts[k];
+  if (j.templates) { slotsCache = j.templates; renderSlots(); }
+}
+
+function renderSlots(){
+  const box = document.getElementById('slots');
+  box.innerHTML = '';
+  slotsCache.forEach((t, i) => {
+    const row = document.createElement('div');
+    row.className = 'slot' + (t ? '' : ' empty');
+    const no = document.createElement('span'); no.className = 'no'; no.textContent = String(i + 1);
+    const nm = document.createElement('input');
+    nm.id = 'sn_' + i; nm.placeholder = t ? '模板名' : '（空位）'; nm.value = (t && t.name) || '';
+    const bs = document.createElement('button'); bs.textContent = '存';
+    const bl = document.createElement('button'); bl.textContent = '取'; bl.disabled = !t;
+    const bc = document.createElement('button'); bc.textContent = '清'; bc.disabled = !t;
+    bs.onclick = () => saveSlot(i, nm.value);
+    bl.onclick = () => loadSlot(i);
+    bc.onclick = () => clearSlot(i);
+    row.appendChild(no); row.appendChild(nm);
+    row.appendChild(bs); row.appendChild(bl); row.appendChild(bc);
+    box.appendChild(row);
+  });
+}
+
+function slotsWith(i, val){
+  const next = slotsCache.map((x, j) => (j === i ? val : (x ? Object.assign({}, x) : null)));
+  while (next.length < 5) next.push(null);
+  return next.slice(0, 5);
+}
+
+function saveSlot(i, name){
+  const tpl = Object.assign({name: String(name || '').trim()}, readPrompts());
+  ctlPost({templates: slotsWith(i, tpl)},
+          j => { adoptPrompts(j); flash('已存入模板 ' + (i + 1)); });
+}
+function loadSlot(i){
+  const t = slotsCache[i];
+  if (!t) return;
+  ctlPost({prompts: {system: t.system, channel: t.channel, reply: t.reply}},
+          j => { adoptPrompts(j); flash('已调用模板 ' + (i + 1) + ' 并生效'); });
+}
+function clearSlot(i){
+  ctlPost({templates: slotsWith(i, null)},
+          j => { adoptPrompts(j); flash('已清空模板 ' + (i + 1)); });
+}
+
+document.getElementById('b_gear').onclick = () => {
+  gw.hidden = !gw.hidden;
+  if (!gw.hidden) renderSlots();
+};
+document.getElementById('b_gwclose').onclick = () => { gw.hidden = true; };
+document.getElementById('b_psave').onclick = () => {
+  ctlPost({prompts: readPrompts()}, j => {
+    adoptPrompts(j);
+    const w = (j && j.warn) || [];
+    flash(w.length ? ('已保存；' + w.join('；')) : '已保存，立即生效', w.length > 0);
+  });
+};
+document.getElementById('b_preset').onclick = () => {
+  ctlPost({prompts_reset: 1}, j => { adoptPrompts(j); flash('已恢复默认'); });
+};
+
+/* 拖动漂浮窗（标题栏按住拖） */
+document.getElementById('gwt').addEventListener('mousedown', ev => {
+  if (ev.target.tagName === 'BUTTON') return;
+  const r = gw.getBoundingClientRect();
+  const dx = ev.clientX - r.left, dy = ev.clientY - r.top;
+  const move = e2 => {
+    gw.style.right = 'auto';
+    gw.style.left = Math.max(0, Math.min(window.innerWidth - 80, e2.clientX - dx)) + 'px';
+    gw.style.top = Math.max(0, e2.clientY - dy) + 'px';
+  };
+  const up = () => {
+    document.removeEventListener('mousemove', move);
+    document.removeEventListener('mouseup', up);
+  };
+  document.addEventListener('mousemove', move);
+  document.addEventListener('mouseup', up);
+  ev.preventDefault();
+});
+
+/* 只在首帧灌一次。之后不再自动覆盖输入框 —— 否则轮询会把正在打的字抹掉 */
+function syncPromptsOnce(s){
+  if (promptsSynced || !s) return;
+  if (s.prompts) for (const k in GTA) GTA[k].value = s.prompts[k];
+  if (s.templates) { slotsCache = s.templates; renderSlots(); }
+  if (s.prompts_file) document.getElementById('p_file').textContent = '存档位置：' + s.prompts_file;
+  promptsSynced = true;
+}
+
 loop();
 </script>
 </body>

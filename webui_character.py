@@ -15,7 +15,8 @@ import numpy as np
 import pandas as pd
 import torch
 
-from fly_llm import FlyLLM, _post as llm_post
+from fly_llm import (FlyLLM, _post as llm_post,
+                     SYSTEM as DEFAULT_SYSTEM, REPLY_SUFFIX as DEFAULT_REPLY_SUFFIX)
 
 OUT = os.environ.get("FLY_DATA", "/content/fly/normalized")
 UI_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui.html")
@@ -23,6 +24,80 @@ PORT = int(os.environ.get("FLY_UI_PORT", "8000"))
 # 最短发声间隔(秒/次): 1/0.30 ≈ 3.33 s, 等价于"目标发声率 ≤ 0.30 次/秒"的旧上限
 MIN_SAY_INTERVAL = 1.0 / 0.30
 LLM = FlyLLM()          # 认知层；不可用时自动降级为模板发声
+
+# ------------------------------------------------------------------ 提示词
+# 三段提示词都能在 WebUI 的齿轮面板里改，保存后立即生效（不用重启进程）。
+# 落盘到 OUT 的上一级，这样重新 clone 仓库 / 重启 webui 进程都不会丢。
+PROMPTS_FILE = os.environ.get(
+    "FLY_PROMPTS_FILE",
+    os.path.join(os.path.dirname(os.path.abspath(OUT)), "prompts.json"))
+DEFAULT_PROMPTS = {"system": DEFAULT_SYSTEM, "channel": "只输出一个很短的中文句子。",
+                   "reply": DEFAULT_REPLY_SUFFIX}
+PROMPT_KEYS = ("system", "channel", "reply")
+PROMPTS = dict(DEFAULT_PROMPTS)
+TEMPLATES = [None] * 5      # 5 个存档位；每个槽是 None 或 {name, system, channel, reply}
+
+
+def _clean_prompts(d, base=None):
+    """只收已知字段、限长；空串回落默认（避免手滑清空后彻底跑歪）。"""
+    base = base if isinstance(base, dict) else PROMPTS
+    out, warns = {}, []
+    d = d if isinstance(d, dict) else {}
+    for k in PROMPT_KEYS:
+        v = d.get(k, base.get(k, DEFAULT_PROMPTS[k]))
+        v = str(v)[:4000] if isinstance(v, (str, int, float)) else base.get(k, DEFAULT_PROMPTS[k])
+        if not v.strip():
+            v = DEFAULT_PROMPTS[k]
+            warns.append(k + " 为空，已回落默认")
+        out[k] = v
+    # 系统提示词里必须留着 JSON 输出格式，否则 _post_and_parse 抠不出 thought/say
+    if "thought" not in out["system"] or "{" not in out["system"]:
+        warns.append("系统提示词里看不到 JSON 输出格式，解析很可能失败")
+    return out, warns
+
+
+def _clean_templates(t):
+    t = t if isinstance(t, list) else []
+    out = []
+    for i in range(5):
+        v = t[i] if i < len(t) else None
+        if isinstance(v, dict):
+            q, _ = _clean_prompts(v)
+            q["name"] = str(v.get("name") or "")[:40]
+            out.append(q)
+        else:
+            out.append(None)
+    return out
+
+
+def _apply_prompts():
+    LLM.system_prompt = PROMPTS["system"]
+    LLM.reply_prompt = PROMPTS["reply"]
+
+
+def _save_prompts_file():
+    try:
+        with open(PROMPTS_FILE, "w", encoding="utf-8") as fh:
+            json.dump({"prompts": PROMPTS, "templates": TEMPLATES}, fh,
+                      ensure_ascii=False, indent=1)
+    except Exception:
+        pass
+
+
+def _load_prompts_file():
+    """整体重绑定 PROMPTS/TEMPLATES —— 读者只会看到旧字典或新字典，不会看到半个。"""
+    global PROMPTS, TEMPLATES
+    try:
+        with open(PROMPTS_FILE, encoding="utf-8") as fh:
+            d = json.load(fh)
+    except Exception:
+        return
+    PROMPTS = _clean_prompts(d.get("prompts") or {}, DEFAULT_PROMPTS)[0]
+    TEMPLATES = _clean_templates(d.get("templates"))
+
+
+_load_prompts_file()
+_apply_prompts()
 
 
 def _sh(cmd: str) -> str:
@@ -56,7 +131,7 @@ def diag() -> dict:
 def probe(prompt: str, max_tokens: int = 400, think: bool = False) -> dict:
     """经公网隧道直连测试认知层（含"关思考是否生效"）。"""
     payload = {"model": LLM.model,
-               "messages": [{"role": "system", "content": "只输出一个很短的中文句子。"},
+               "messages": [{"role": "system", "content": PROMPTS["channel"]},
                             {"role": "user", "content": prompt}],
                "max_tokens": max_tokens, "temperature": 0.7}
     if not think:
@@ -604,6 +679,9 @@ def snapshot(since):
             "reply_mode": c.params.get("reply", 0),
             "unanswered": sum(1 for m in c.external if not m["answered"]),
             "params": dict(c.params),
+            "prompts": dict(PROMPTS),
+            "templates": [dict(t) if t else None for t in TEMPLATES],
+            "prompts_file": PROMPTS_FILE,
             "seq": c.seq,
             "events": [e for e in c.events if e["seq"] > since][-40:],
         }
@@ -645,6 +723,7 @@ class H(BaseHTTPRequestHandler):
         except Exception:
             data = {}
         if self.path == "/api/control":
+            warns = []
             with LOCK:
                 for k, v in data.items():
                     if k in CH.params:
@@ -653,7 +732,28 @@ class H(BaseHTTPRequestHandler):
                     global A
                     A = torch.sparse_csr_tensor(crow, col,
                         Wraw * (W_SYN * float(CH.params["gain"])), (N, N))
-            self._send(200, b'{"ok":true}')
+                # 提示词：整体重绑定，避免读者看到改了一半的字典
+                if "prompts" in data or data.get("prompts_reset"):
+                    global PROMPTS
+                    if data.get("prompts_reset"):
+                        PROMPTS = dict(DEFAULT_PROMPTS)
+                    else:
+                        PROMPTS, w = _clean_prompts(data["prompts"], PROMPTS)
+                        warns += w
+                    _apply_prompts()
+                    _save_prompts_file()
+                if "templates" in data:
+                    global TEMPLATES
+                    TEMPLATES = _clean_templates(data["templates"])
+                    _save_prompts_file()
+            # 只有请求真的动了提示词/模板才回传它们 —— 滑块是 input 事件高频触发,
+            # 不该每次都把整套提示词捎带回去
+            resp = {"ok": True, "warn": warns}
+            if ("prompts" in data or data.get("prompts_reset")
+                    or "templates" in data):
+                resp["prompts"] = dict(PROMPTS)
+                resp["templates"] = [dict(t) if t else None for t in TEMPLATES]
+            self._send(200, json.dumps(resp, ensure_ascii=False).encode("utf-8"))
         elif self.path == "/api/reset":
             with LOCK:
                 keep = dict(CH.params)      # 重置时要保留界面设的参数, 否则消融开关会被抹掉

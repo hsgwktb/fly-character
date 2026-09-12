@@ -212,6 +212,7 @@ class Char:
                            mi=1.0, sr=0.05, kp=2.0, ada=1.0,
                            use=1.0,      # 消融: 0 = LLM 输出只显示、不消费
                            think=0.0,    # 发声时是否允许模型思考(慢但更丰富)
+                           reply=0.0,    # 1 = 强制回复我的输入(绕过冲动阈值)
                            run=1.0)
 
     def drives(self):
@@ -287,7 +288,8 @@ class Char:
         text = (text or "").strip()[:200]
         if not text:
             return
-        self.external.append({"t": round(self.t, 1), "text": text})
+        self.external.append({"t": round(self.t, 1), "text": text,
+                              "answered": False, "taken": False, "tries": 0})
         self.ev("hear", "📣 听到: %s" % text[:80])
         self.interest_boost = min(1.4, self.interest_boost + 0.9)
         self.aff["arousal"] = min(1.0, self.aff["arousal"] + 0.25)
@@ -295,20 +297,36 @@ class Char:
         self.vocal_bump = min(1.2, self.vocal_bump + 0.9)
 
     def apply_llm(self, r: dict, use_effect: float) -> None:
-        if not r.get("ok"):
+        tag = r.get("tag") or ""
+        meta = r.get("meta") or {}
+        ok = bool(r.get("ok"))
+        say = (r.get("say") or "").strip()
+        thought = (r.get("thought") or "").strip()
+
+        # 强制回复：把结果对回到那条外部消息上。
+        # 只有"成功且有台词"才算已回复；失败或空回复交回队列重试（tries 上限 3）。
+        if tag == "reply" and meta.get("msg_t") is not None:
+            m = next((x for x in self.external if x["t"] == meta["msg_t"]), None)
+            if m is not None:
+                if ok and say:
+                    m["answered"] = True
+                    m["taken"] = False
+                else:
+                    m["taken"] = False
+
+        if not ok:
             self.ev("think", "(认知层失败: %s) <span class='badge f'>错误</span>"
                     % (r.get("err") or "")[:70])
             return
-        thought = (r.get("thought") or "").strip()
-        say = (r.get("say") or "").strip()
         if thought:
             self.thoughts.append({"t": round(self.t, 1), "thought": thought,
                                   "ms": r.get("ms", 0)})
             self.ev("tht", thought)      # 走事件流, 前端按 kind 路由到思维面板
         if say:
             self.says.append({"t": round(self.t, 1), "say": say})
-            self.ev("spk", "「%s」 <span class='stat'>%dms%s</span>" % (
-                say, r.get("ms", 0), " ·带思考" if r.get("reasoning_len") else ""))
+            self.ev("spk", "「%s」 <span class='stat'>%dms%s%s</span>" % (
+                say, r.get("ms", 0), " ·带思考" if r.get("reasoning_len") else "",
+                " ·回复" if tag == "reply" else ""))
         if use_effect > 0.5:
             for k in ("novelty", "threat", "control"):
                 v = r.get(k)
@@ -504,6 +522,24 @@ class Char:
             self.speak_times.append(self.t)
             self.theta += 0.15
             self.u_speak = 0.0
+
+        # ---- 强制回复模式：有新消息就绕过冲动阈值直接回 ----
+        # 默认(主动模式)下消息只是刺激、不保证被回应; 打开这个开关后改成必须回。
+        if P.get("reply", 0.0) > 0.5 and self.refr <= 0:
+            msg = next((m for m in self.external
+                        if not m["answered"] and not m["taken"] and m["tries"] < 3), None)
+            if msg is not None:
+                msg["taken"] = True
+                msg["tries"] += 1
+                self.llm_pending += 1
+                pkt = self.build_packet("reply")
+                pkt["reply_to"] = msg["text"]
+                LLM.request(pkt, tag="reply",
+                            allow_think=bool(P.get("think", 0.0) > 0.5),
+                            meta={"msg_t": msg["t"], "msg_text": msg["text"]})
+                self.ev("think", "… <span class='stat'>强制回复（绕过阈值）</span>")
+                self.refr = 12.0
+
         r = LLM.poll()
         if r is not None:
             self.llm_pending = max(0, self.llm_pending - 1)
@@ -538,6 +574,8 @@ def snapshot(since):
             "llm_pending": c.llm_pending,
             "llm_consumed": c.llm_consumed,
             "llm_discarded": c.llm_discarded,
+            "reply_mode": c.params.get("reply", 0),
+            "unanswered": sum(1 for m in c.external if not m["answered"]),
             "params": dict(c.params),
             "seq": c.seq,
             "events": [e for e in c.events if e["seq"] > since][-40:],

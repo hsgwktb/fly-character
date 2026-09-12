@@ -122,10 +122,15 @@ class FlyLLM:
         return "on"              # 关不掉：只能给足 max_tokens，并容忍慢
 
     # ---------- 请求 ----------
-    def request(self, packet: dict, tag: str, allow_think: bool = False) -> bool:
-        """投递一次请求。队列满则丢弃最旧的（latest-wins）。"""
+    def request(self, packet: dict, tag: str, allow_think: bool = False,
+                meta: dict | None = None) -> bool:
+        """投递一次请求。队列满则丢弃最旧的（latest-wins）。
+
+        meta 会随结果原样回传，用于把结果对回到触发它的那件事上
+        （例如"这条外部消息已经被回复了"）。
+        """
         job = {"packet": packet, "tag": tag, "allow_think": allow_think,
-               "t0": time.time(), "id": self.n_calls}
+               "meta": meta or {}, "t0": time.time(), "id": self.n_calls}
         self.n_calls += 1
         try:
             self.q_in.put_nowait(job)
@@ -173,6 +178,7 @@ class FlyLLM:
                 self.last_error = res["err"]
             res["t0"] = job["t0"]
             res["tag"] = job["tag"]
+            res["meta"] = job.get("meta") or {}
             res["ms"] = int((time.time() - t0) * 1000)
             self.t_last_ms = res["ms"]
             self.n_done += 1
@@ -186,6 +192,12 @@ class FlyLLM:
         use_think = bool(job["allow_think"])
         max_tok = 4096 if use_think else 400
         sysmsg = SYSTEM if use_think else SYSTEM + " /no_think"
+        # 强制回复模式：明确告诉它有人在说话、必须回一句
+        reply_to = (packet or {}).get("reply_to")
+        if reply_to:
+            sysmsg += ("\n刚才有东西在对你说：「" + str(reply_to)[:120] +
+                       "」。你必须回一句 —— 用你果蝇的身份回它，"
+                       "可以短、可以不耐烦、可以答非所问，但 say 不能为空。")
 
         payload = {
             "model": self.model,

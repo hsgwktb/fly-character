@@ -178,7 +178,7 @@
   <!-- ============ 右：对话 / 思维 / 行为 ============ -->
   <div class="col3">
     <div class="panel">
-      <h2>对话 <span>你的话只当刺激，不保证它回应</span></h2>
+      <h2>对话 <span id="s_dialogue">你的话只当刺激，不保证它回应</span></h2>
       <div id="chat"></div>
       <div style="display:flex;gap:6px;margin-top:8px">
         <input id="say" placeholder="对它说点什么…" style="flex:1">
@@ -231,6 +231,7 @@ const SPEC = [
   ['认知层', [
     ['use', '消费 LLM 输出', 0, 1, 1, '0 = 消融：只显示不改变行为'],
     ['think', '发声时允许思考', 0, 1, 1, '更丰富但慢得多'],
+    ['reply', '强制回复我的输入', 0, 1, 1, '1 = 绕过冲动阈值，收到消息就回；0 = 主动模式，回不回由它'],
   ]],
 ];
 const PKEYS = SPEC.flatMap(g => g[1].map(x => x[0]));
@@ -354,6 +355,14 @@ function push(s){
   const gt = document.getElementById('s_gate');
   gt.textContent = '思考开关=' + (ll.think_mode || '-');
   gt.className = 'pill ' + (ll.think_mode === 'kwargs' ? 'g' : 'w');
+
+  // 对话模式：主动 vs 强制回复
+  const forced = (state.reply_mode || 0) > 0.5;
+  const dlg = document.getElementById('s_dialogue');
+  dlg.textContent = forced
+    ? ('强制回复模式' + (state.unanswered ? ' · 待回复 ' + state.unanswered : ' · 已回完'))
+    : '主动模式：消息只当刺激，不保证它回应';
+  dlg.className = forced ? 'tag g' : 'tag';
 
   // 认知面板
   document.getElementById('cogkv').innerHTML =

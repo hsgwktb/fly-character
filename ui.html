@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>果蝇数字角色 · 活体观测台</title>
+<style>
+  :root{--bg:#0f1115;--panel:#171a21;--line:#262b36;--fg:#e6e9ef;--dim:#8b93a7;
+        --acc:#4ea1ff;--warn:#ff6b6b;--ok:#42d392;--spk:#ffd166;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+       font:13px/1.5 -apple-system,"Segoe UI",Roboto,"Microsoft YaHei",sans-serif}
+  header{display:flex;align-items:center;gap:14px;padding:10px 16px;background:var(--panel);
+         border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5;flex-wrap:wrap}
+  h1{font-size:15px;margin:0;font-weight:600}
+  .stat{color:var(--dim);font-variant-numeric:tabular-nums}
+  .stat b{color:var(--fg);font-weight:600}
+  button{background:#232936;color:var(--fg);border:1px solid var(--line);border-radius:6px;
+         padding:5px 12px;cursor:pointer;font-size:12px}
+  button:hover{border-color:var(--acc)}
+  button.on{background:#1d3a5c;border-color:var(--acc)}
+  main{display:grid;grid-template-columns:290px 1fr 340px;gap:12px;padding:12px;align-items:start}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px}
+  .panel h2{font-size:12px;margin:0 0 10px;color:var(--dim);text-transform:uppercase;
+            letter-spacing:.06em;font-weight:600}
+  .ctl{margin-bottom:9px}
+  .ctl label{display:flex;justify-content:space-between;font-size:12px;color:var(--dim);margin-bottom:2px}
+  .ctl label b{color:var(--fg);font-variant-numeric:tabular-nums}
+  input[type=range]{width:100%;accent-color:var(--acc);height:16px}
+  .chart{margin-bottom:14px}
+  .chart canvas{width:100%;height:110px;display:block;background:#12151b;border:1px solid var(--line);
+                border-radius:6px}
+  .legend{display:flex;gap:12px;flex-wrap:wrap;margin-top:4px;font-size:11px;color:var(--dim)}
+  .legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:4px}
+  #log{height:430px;overflow-y:auto;font-size:12px}
+  .row{display:flex;gap:8px;padding:3px 0;border-bottom:1px solid #1d212a}
+  .row .t{color:var(--dim);font-variant-numeric:tabular-nums;flex:0 0 52px}
+  .row.act .v{color:var(--acc)}
+  .row.spk .v{color:var(--spk)}
+  .row.fb .v{color:var(--dim)}
+  .badge{font-size:10px;padding:1px 6px;border-radius:9px;border:1px solid var(--line);color:var(--dim)}
+  .badge.g{border-color:var(--ok);color:var(--ok)}
+  .badge.f{border-color:#6b7280;color:#9ca3af}
+  footer{color:var(--dim);font-size:11px;padding:0 16px 16px}
+</style>
+</head>
+<body>
+<header>
+  <h1>🪰 果蝇数字角色 · 活体观测台</h1>
+  <span class="stat">t=<b id="s_t">0</b>s</span>
+  <span class="stat">tick=<b id="s_tick">0</b></span>
+  <span class="stat">fps=<b id="s_fps">0</b></span>
+  <span class="stat">连接组驱动 <b id="s_share">0</b>%</span>
+  <span class="stat badge" id="s_mode">—</span>
+  <button id="b_run">暂停</button>
+  <button id="b_reset">重置</button>
+</header>
+
+<main>
+  <div class="panel">
+    <h2>参数</h2>
+    <div class="ctl"><label>脑增益 gain <b id="v_gain"></b></label>
+      <input type="range" id="p_gain" min="0" max="1.5" step="0.05"></div>
+    <div class="ctl"><label>脑步数/tick <b id="v_steps"></b></label>
+      <input type="range" id="p_steps" min="0" max="60" step="1"></div>
+    <div class="ctl"><label>习惯化强度 <b id="v_hab"></b></label>
+      <input type="range" id="p_hab" min="0" max="1" step="0.05"></div>
+    <div class="ctl"><label>感觉带下限 <b id="v_lo"></b></label>
+      <input type="range" id="p_lo" min="0" max="0.5" step="0.01"></div>
+    <div class="ctl"><label>感觉带上限增量 <b id="v_hi"></b></label>
+      <input type="range" id="p_hi" min="0.05" max="1" step="0.05"></div>
+    <h2 style="margin-top:16px">驱动倍率</h2>
+    <div class="ctl"><label>饥饿→糖 <b id="v_mh"></b></label>
+      <input type="range" id="p_mh" min="0" max="2" step="0.05"></div>
+    <div class="ctl"><label>威胁→loom <b id="v_mt"></b></label>
+      <input type="range" id="p_mt" min="0" max="2" step="0.05"></div>
+    <div class="ctl"><label>无聊→新颖度增益 <b id="v_mb"></b></label>
+      <input type="range" id="p_mb" min="0" max="2" step="0.05"></div>
+    <div class="ctl"><label>孤独→社交增益 <b id="v_ml"></b></label>
+      <input type="range" id="p_ml" min="0" max="2" step="0.05"></div>
+    <h2 style="margin-top:16px">说话门控</h2>
+    <div class="ctl"><label>静息目标发声率 /s <b id="v_sr"></b></label>
+      <input type="range" id="p_sr" min="0" max="0.2" step="0.005"></div>
+    <div class="ctl"><label>阈值积分增益 κ <b id="v_kp"></b></label>
+      <input type="range" id="p_kp" min="0" max="6" step="0.25"></div>
+    <div class="ctl"><label>自适应阈值 <b id="v_ada"></b></label>
+      <input type="range" id="p_ada" min="0" max="1" step="1"></div>
+    <div style="color:var(--dim);font-size:11px;margin-top:10px">
+      「自适应阈值=0」用于复现固定阈值的病态（发声率失控、间隔像节拍器）。
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>内驱力</h2>
+    <div class="chart"><canvas id="c_drv"></canvas>
+      <div class="legend">
+        <span><i style="background:#ff6b6b"></i>饥饿</span>
+        <span><i style="background:#4ea1ff"></i>口渴</span>
+        <span><i style="background:#ff9f43"></i>热/冷</span>
+        <span><i style="background:#42d392"></i>无聊</span>
+        <span><i style="background:#c084fc"></i>孤独</span>
+        <span><i style="background:#f43f5e"></i>威胁</span>
+      </div>
+    </div>
+    <h2>想说话冲动 u 与 阈值 θ（越过即开口）</h2>
+    <div class="chart"><canvas id="c_spk"></canvas>
+      <div class="legend">
+        <span><i style="background:#ffd166"></i>u_speak</span>
+        <span><i style="background:#8b93a7"></i>θ 阈值</span>
+      </div>
+    </div>
+    <h2>连接组读出（识别细胞放电率）</h2>
+    <div class="chart"><canvas id="c_rd"></canvas>
+      <div class="legend">
+        <span><i style="background:#4ea1ff"></i>MN9 进食</span>
+        <span><i style="background:#ff6b6b"></i>DNp01 逃逸</span>
+        <span><i style="background:#42d392"></i>DNp20 转向</span>
+        <span><i style="background:#c084fc"></i>DNp09 行走</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>行为与发声</h2>
+    <div id="log"></div>
+  </div>
+</main>
+<footer>
+  行为条目：<span class="badge g">连接组</span> 表示由识别细胞读出触发；
+  <span class="badge f">回退</span> 表示该行为尚无识别通路、由手写权重触发。
+</footer>
+
+<script>
+const H = 600;                      // 历史长度
+let hist = [], lastSeq = 0, running = true;
+
+function draw(canvasId, series, ymax){
+  const c = document.getElementById(canvasId), dpr = devicePixelRatio||1;
+  const w = c.clientWidth, h = c.clientHeight;
+  if (c.width !== w*dpr){ c.width = w*dpr; c.height = h*dpr; }
+  const g = c.getContext('2d'); g.setTransform(dpr,0,0,dpr,0,0);
+  g.clearRect(0,0,w,h);
+  g.strokeStyle = '#1f242e'; g.lineWidth = 1;
+  for (let i=1;i<4;i++){ const y=h*i/4; g.beginPath(); g.moveTo(0,y); g.lineTo(w,y); g.stroke(); }
+  const n = series[0] ? series[0].data.length : 0;
+  if (!n) return;
+  let mx = ymax;
+  if (mx == null){ mx = 1e-6; for (const s of series) for (const v of s.data) if (v>mx) mx=v; mx*=1.15; }
+  for (const s of series){
+    g.strokeStyle = s.color; g.lineWidth = 1.6; g.beginPath();
+    s.data.forEach((v,i)=>{ const x = w*i/(H-1), y = h-(Math.min(v,mx)/mx)*h;
+      i? g.lineTo(x,y) : g.moveTo(x,y); });
+    g.stroke();
+  }
+}
+
+function push(state){
+  hist.push(state);
+  if (hist.length > H) { hist.shift(); }
+  draw('c_drv', [
+    {color:'#ff6b6b', data: hist.map(s=>s.d.hunger)},
+    {color:'#4ea1ff', data: hist.map(s=>s.d.thirst)},
+    {color:'#ff9f43', data: hist.map(s=>Math.max(s.d.heat,s.d.cold))},
+    {color:'#42d392', data: hist.map(s=>s.d.boredom)},
+    {color:'#c084fc', data: hist.map(s=>s.d.lonely)},
+    {color:'#f43f5e', data: hist.map(s=>s.d.threat)},
+  ], 1);
+  draw('c_spk', [
+    {color:'#8b93a7', data: hist.map(s=>s.theta)},
+    {color:'#ffd166', data: hist.map(s=>s.u_speak)},
+  ], null);
+  draw('c_rd', [
+    {color:'#4ea1ff', data: hist.map(s=>s.ro.eat)},
+    {color:'#ff6b6b', data: hist.map(s=>s.ro.flee)},
+    {color:'#42d392', data: hist.map(s=>s.ro.approach)},
+    {color:'#c084fc', data: hist.map(s=>s.ro.explore)},
+  ], null);
+
+  document.getElementById('s_t').textContent = state.t.toFixed(0);
+  document.getElementById('s_tick').textContent = state.tick;
+  document.getElementById('s_fps').textContent = state.fps.toFixed(1);
+  document.getElementById('s_share').textContent = state.n_act ? (100*state.n_grounded/state.n_act).toFixed(0) : '0';
+  const m = document.getElementById('s_mode');
+  m.textContent = state.llm === 'openai' ? 'LLM 端点' : '模板发声';
+  m.className = 'stat badge ' + (state.llm==='openai'?'g':'f');
+
+  const log = document.getElementById('log');
+  for (const e of state.events){
+    const div = document.createElement('div');
+    div.className = 'row ' + (e.kind==='spk'?'spk':(e.kind==='fb'?'fb':'act'));
+    div.innerHTML = '<span class="t">'+e.t.toFixed(0)+'s</span><span class="v">'+e.text+'</span>';
+    log.prepend(div);
+  }
+  lastSeq = state.seq;
+  while (log.childElementCount > 220) log.removeChild(log.lastChild);
+}
+
+const P = ['gain','steps','hab','lo','hi','mh','mt','mb','ml','sr','kp','ada'];
+function bind(){
+  for (const k of P){
+    const el = document.getElementById('p_'+k);
+    el.addEventListener('input', ()=>{
+      document.getElementById('v_'+k).textContent = el.value;
+      fetch('/api/control', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({[k]: parseFloat(el.value)})});
+    });
+  }
+}
+function applyParams(p){
+  const map = {gain:'p_gain',steps:'p_steps',hab:'p_hab',lo:'p_lo',hi:'p_hi',
+               mh:'p_mh',mt:'p_mt',mb:'p_mb',ml:'p_ml',sr:'p_sr',kp:'p_kp',ada:'p_ada'};
+  for (const k in map){
+    const el = document.getElementById(map[k]);
+    if (document.activeElement !== el) el.value = p[k];
+    document.getElementById('v_'+k).textContent = p[k];
+  }
+}
+document.getElementById('b_run').onclick = e => {
+  running = !running;
+  fetch('/api/control',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({run: running})});
+  e.target.textContent = running ? '暂停' : '继续';
+  e.target.classList.toggle('on', !running);
+};
+document.getElementById('b_reset').onclick = () => {
+  hist = []; lastSeq = 0; document.getElementById('log').innerHTML='';
+  fetch('/api/reset', {method:'POST'});
+};
+bind();
+async function loop(){
+  try{
+    const r = await fetch('/api/state?since='+lastSeq); const s = await r.json();
+    if (hist.length === 0) applyParams(s.params);
+    push(s);
+  }catch(e){}
+  setTimeout(loop, 250);
+}
+loop();
+</script>
+</body>
+</html>

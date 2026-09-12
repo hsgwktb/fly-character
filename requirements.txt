@@ -1,0 +1,5 @@
+# Colab 上 torch 已预装(CUDA 版); 其余按需
+numpy>=2.1
+pandas>=2.2
+pyarrow>=23.0
+torch>=2.11

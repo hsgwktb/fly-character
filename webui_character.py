@@ -20,6 +20,8 @@ from fly_llm import FlyLLM, _post as llm_post
 OUT = os.environ.get("FLY_DATA", "/content/fly/normalized")
 UI_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui.html")
 PORT = int(os.environ.get("FLY_UI_PORT", "8000"))
+# 最短发声间隔(秒/次): 1/0.30 ≈ 3.33 s, 等价于"目标发声率 ≤ 0.30 次/秒"的旧上限
+MIN_SAY_INTERVAL = 1.0 / 0.30
 LLM = FlyLLM()          # 认知层；不可用时自动降级为模板发声
 
 
@@ -210,7 +212,7 @@ class Char:
         self.rng = np.random.default_rng(7)
         self.params = dict(gain=0.65, steps=15, hab=0.7, lo=0.10, hi=0.40,
                            mh=1.0, mt=1.0, mb=1.0, ml=1.0, mc=1.0, soc=0.0,
-                           mi=1.0, sr=0.05, kp=2.0, ada=1.0,
+                           mi=1.0, sr=20.0, kp=2.0, ada=1.0,   # sr: 静息发声间隔(秒/次)
                            use=1.0,      # 消融: 0 = LLM 输出只显示、不消费
                            think=0.0,    # 发声时是否允许模型思考(慢但更丰富)
                            reply=0.0,    # 1 = 强制回复我的输入(绕过冲动阈值)
@@ -498,7 +500,15 @@ class Char:
         self.u_speak += 0.28 * math.sqrt(dt) * float(self.rng.standard_normal())
         self.u_speak = max(0.0, self.u_speak)
         soc = max(d["lonely"], d["sexual"])
-        target = min(P["sr"] * (1.0 + 2.5 * stress + 1.5 * soc), 0.30)
+        # sr 是"静息发声间隔"(秒/次): 越大越沉默; 内驱力强时目标间隔自动变短。
+        # 内层 max 兜住"比上限还快"的设置, 外层 min 是发声率 0.30 次/秒 的封顶;
+        # sr<=0 按旧语义(旧参数是发声率)视为沉默。
+        sr_interval = float(P["sr"])
+        if sr_interval <= 0:
+            target = 0.0
+        else:
+            target = min((1.0 + 2.5 * stress + 1.5 * soc) / max(sr_interval, MIN_SAY_INTERVAL),
+                         1.0 / MIN_SAY_INTERVAL)
         if P["ada"] > 0.5:
             while self.speak_times and self.t - self.speak_times[0] > 30.0:
                 self.speak_times.popleft()

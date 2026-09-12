@@ -222,6 +222,8 @@ class Char:
         for name, (wts, base, thr, dur, cd) in BEH.items():
             if self.cooldown[name] > 0:
                 continue
+            if name == "court" and social <= 0.05:
+                continue        # 视野里没有同类就不求偶 —— CI 才能解释为"表达出来的"求偶
             drv = base + sum(wt * d[k] for k, wt in wts.items())
             if name == "court":        # 性欲->求偶 的倍率可调
                 drv = base + wts["sexual"] * P["mc"] * d["sexual"] + wts["lonely"] * d["lonely"]

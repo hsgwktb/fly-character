@@ -2,134 +2,145 @@
 <html lang="zh">
 <head>
 <meta charset="utf-8">
-<title>果蝇数字角色 · 活体观测台</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>果蝇数字角色 · 控制台</title>
 <style>
-  :root{--bg:#0f1115;--panel:#171a21;--line:#262b36;--fg:#e6e9ef;--dim:#8b93a7;
-        --acc:#4ea1ff;--warn:#ff6b6b;--ok:#42d392;--spk:#ffd166;}
+  :root{--bg:#0d1014;--panel:#151a21;--panel2:#11151b;--line:#242b36;--fg:#e7ebf2;
+        --dim:#8b95a8;--acc:#4ea1ff;--ok:#42d392;--warn:#ffb454;--bad:#ff6b6b;--spk:#ffd166;}
   *{box-sizing:border-box}
+  html,body{height:100%}
   body{margin:0;background:var(--bg);color:var(--fg);
-       font:13px/1.5 -apple-system,"Segoe UI",Roboto,"Microsoft YaHei",sans-serif}
-  header{display:flex;align-items:center;gap:14px;padding:10px 16px;background:var(--panel);
-         border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5;flex-wrap:wrap}
-  h1{font-size:15px;margin:0;font-weight:600}
-  .stat{color:var(--dim);font-variant-numeric:tabular-nums}
-  .stat b{color:var(--fg);font-weight:600}
-  button{background:#232936;color:var(--fg);border:1px solid var(--line);border-radius:6px;
-         padding:5px 12px;cursor:pointer;font-size:12px}
+       font:13px/1.55 -apple-system,"Segoe UI",Roboto,"Microsoft YaHei",sans-serif}
+  button{background:#212836;color:var(--fg);border:1px solid var(--line);border-radius:6px;
+         padding:5px 11px;cursor:pointer;font-size:12px}
   button:hover{border-color:var(--acc)}
+  button.pri{background:#1d3a5c;border-color:var(--acc)}
   button.on{background:#1d3a5c;border-color:var(--acc)}
-  main{display:grid;grid-template-columns:290px 1fr 340px;gap:12px;padding:12px;align-items:start}
-  .panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px}
-  .panel h2{font-size:12px;margin:0 0 10px;color:var(--dim);text-transform:uppercase;
-            letter-spacing:.06em;font-weight:600}
-  .ctl{margin-bottom:9px}
-  .ctl label{display:flex;justify-content:space-between;font-size:12px;color:var(--dim);margin-bottom:2px}
+  input,select{background:var(--panel2);border:1px solid var(--line);color:var(--fg);
+        border-radius:6px;padding:6px 9px;font-size:12px;font-family:inherit}
+
+  header{position:sticky;top:0;z-index:9;background:var(--panel);border-bottom:1px solid var(--line);
+         padding:9px 14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  h1{font-size:14px;margin:0 6px 0 0;font-weight:650;white-space:nowrap}
+  .stat{color:var(--dim);font-variant-numeric:tabular-nums;white-space:nowrap}
+  .stat b{color:var(--fg);font-weight:600}
+  .pill{font-size:11px;padding:2px 8px;border-radius:10px;border:1px solid var(--line);color:var(--dim)}
+  .pill.g{border-color:var(--ok);color:var(--ok)}
+  .pill.w{border-color:var(--warn);color:var(--warn)}
+  .pill.b{border-color:var(--bad);color:var(--bad)}
+  .spacer{flex:1}
+
+  main{display:grid;grid-template-columns:300px minmax(360px,1fr) 380px;gap:11px;padding:11px;align-items:start}
+  @media(max-width:1400px){main{grid-template-columns:280px 1fr}.col3{grid-column:1/-1}}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:11px;margin-bottom:11px}
+  .panel h2{font-size:11px;margin:0 0 9px;color:var(--dim);letter-spacing:.07em;
+            text-transform:uppercase;font-weight:650}
+  .panel h2 span{color:var(--fg);text-transform:none;letter-spacing:0;font-weight:500}
+
+  .grp{margin:2px 0 12px;padding-top:8px;border-top:1px solid #1c222c}
+  .grp:first-of-type{border-top:0;padding-top:0}
+  .grp>.t{font-size:11px;color:var(--acc);margin-bottom:7px;font-weight:600}
+  .ctl{margin-bottom:8px}
+  .ctl label{display:flex;justify-content:space-between;gap:6px;font-size:11.5px;color:var(--dim);
+             margin-bottom:1px}
   .ctl label b{color:var(--fg);font-variant-numeric:tabular-nums}
-  input[type=range]{width:100%;accent-color:var(--acc);height:16px}
-  .chart{margin-bottom:14px}
-  .chart canvas{width:100%;height:110px;display:block;background:#12151b;border:1px solid var(--line);
-                border-radius:6px}
-  .legend{display:flex;gap:12px;flex-wrap:wrap;margin-top:4px;font-size:11px;color:var(--dim)}
+  input[type=range]{width:100%;accent-color:var(--acc);height:15px;padding:0;border:0;background:none}
+  .note{color:var(--dim);font-size:11px;margin-top:5px}
+
+  canvas{width:100%;display:block;background:var(--panel2);border:1px solid var(--line);border-radius:7px}
+  .legend{display:flex;gap:11px;flex-wrap:wrap;margin-top:5px;font-size:11px;color:var(--dim)}
   .legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:4px}
-  #log{height:430px;overflow-y:auto;font-size:12px}
-  .row{display:flex;gap:8px;padding:3px 0;border-bottom:1px solid #1d212a}
-  .row .t{color:var(--dim);font-variant-numeric:tabular-nums;flex:0 0 52px}
-  .row.act .v{color:var(--acc)}
-  .row.spk .v{color:var(--spk)}
-  .row.fb .v{color:var(--dim)}
-  .badge{font-size:10px;padding:1px 6px;border-radius:9px;border:1px solid var(--line);color:var(--dim)}
-  .badge.g{border-color:var(--ok);color:var(--ok)}
-  .badge.f{border-color:#6b7280;color:#9ca3af}
-  footer{color:var(--dim);font-size:11px;padding:0 16px 16px}
+
+  .bars{display:flex;flex-direction:column;gap:4px}
+  .bar{display:grid;grid-template-columns:74px 1fr 44px;gap:7px;align-items:center;font-size:11.5px}
+  .bar .lab{color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .bar .trk{background:var(--panel2);border:1px solid var(--line);border-radius:4px;height:11px;overflow:hidden}
+  .bar .fil{height:100%;border-radius:3px;transition:width .18s linear}
+  .bar .num{color:var(--fg);text-align:right;font-variant-numeric:tabular-nums}
+
+  #chat{height:330px;overflow-y:auto;display:flex;flex-direction:column;gap:7px;
+        padding:9px;background:var(--panel2);border:1px solid var(--line);border-radius:7px;
+        overscroll-behavior:contain}
+  .msg{max-width:88%;padding:6px 10px;border-radius:10px;font-size:12.5px;white-space:pre-wrap;
+       word-break:break-word}
+  .msg.fly{align-self:flex-start;background:#1d2634;border:1px solid #2b3547}
+  .msg.usr{align-self:flex-end;background:#173a2c;border:1px solid #245740}
+  .msg .meta{display:block;font-size:10px;color:var(--dim);margin-top:3px;font-variant-numeric:tabular-nums}
+
+  #think{height:150px;overflow-y:auto;font-size:12px;background:var(--panel2);
+         border:1px solid var(--line);border-radius:7px;padding:8px;overscroll-behavior:contain}
+  .th{padding:3px 0;border-bottom:1px solid #1b212a;color:#cfd6e2}
+  .th .t{color:var(--dim);font-variant-numeric:tabular-nums;margin-right:6px}
+
+  #log{height:180px;overflow-y:auto;font-size:12px;background:var(--panel2);
+       border:1px solid var(--line);border-radius:7px;padding:8px}
+  .ev{padding:2px 0;border-bottom:1px solid #1b212a;display:flex;gap:7px}
+  .ev .t{color:var(--dim);flex:0 0 48px;font-variant-numeric:tabular-nums}
+  .ev.spk{color:var(--spk)} .ev.fb{color:var(--dim)} .ev.hear{color:var(--acc)}
+  .tag{font-size:10px;padding:1px 6px;border-radius:8px;border:1px solid var(--line);color:var(--dim)}
+  .tag.g{border-color:var(--ok);color:var(--ok)} .tag.f{border-color:#5b6474;color:#9aa4b5}
+
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:3px 10px;font-size:11.5px;color:var(--dim)}
+  .kv b{color:var(--fg);font-weight:600;font-variant-numeric:tabular-nums}
+  details summary{cursor:pointer;color:var(--dim);font-size:11px;outline:none}
 </style>
 </head>
 <body>
 <header>
-  <h1>🪰 果蝇数字角色 · 活体观测台</h1>
-  <span class="stat">t=<b id="s_t">0</b>s</span>
-  <span class="stat">tick=<b id="s_tick">0</b></span>
-  <span class="stat">fps=<b id="s_fps">0</b></span>
+  <h1>🪰 果蝇数字角色</h1>
+  <span class="stat">t <b id="s_t">0</b>s</span>
+  <span class="stat">运行 <b id="s_up">0:00</b></span>
+  <span class="stat">fps <b id="s_fps">0</b></span>
   <span class="stat">连接组驱动 <b id="s_share">0</b>%</span>
-  <span class="stat">性欲 <b id="s_sex">0.00</b></span>
-  <span class="stat">兴趣 <b id="s_int">0.00</b></span>
-  <span class="stat">求偶指数 CI <b id="s_ci">0.00</b></span>
-  <span class="stat">认知层 <b id="s_llm">—</b></span>
-  <span class="stat badge" id="s_mode">—</span>
-  <button id="b_run">暂停</button>
+  <span class="stat">兴趣 <b id="s_int">0</b></span>
+  <span class="stat">性欲 <b id="s_sex">0</b></span>
+  <span class="stat">求偶 CI <b id="s_ci">0</b></span>
+  <span class="pill" id="s_llm">认知层 —</span>
+  <span class="pill" id="s_gate">—</span>
+  <span class="spacer"></span>
+  <button id="b_run" class="pri">暂停</button>
   <button id="b_reset">重置</button>
+  <button id="b_export">导出痕迹</button>
 </header>
 
 <main>
-  <div class="panel">
-    <h2>参数</h2>
-    <div class="ctl"><label>脑增益 gain <b id="v_gain"></b></label>
-      <input type="range" id="p_gain" min="0" max="1.5" step="0.05"></div>
-    <div class="ctl"><label>脑步数/tick <b id="v_steps"></b></label>
-      <input type="range" id="p_steps" min="0" max="60" step="1"></div>
-    <div class="ctl"><label>习惯化强度 <b id="v_hab"></b></label>
-      <input type="range" id="p_hab" min="0" max="1" step="0.05"></div>
-    <div class="ctl"><label>感觉带下限 <b id="v_lo"></b></label>
-      <input type="range" id="p_lo" min="0" max="0.5" step="0.01"></div>
-    <div class="ctl"><label>感觉带上限增量 <b id="v_hi"></b></label>
-      <input type="range" id="p_hi" min="0.05" max="1" step="0.05"></div>
-    <h2 style="margin-top:16px">驱动倍率</h2>
-    <div class="ctl"><label>饥饿→糖 <b id="v_mh"></b></label>
-      <input type="range" id="p_mh" min="0" max="2" step="0.05"></div>
-    <div class="ctl"><label>威胁→loom <b id="v_mt"></b></label>
-      <input type="range" id="p_mt" min="0" max="2" step="0.05"></div>
-    <div class="ctl"><label>无聊→新颖度增益 <b id="v_mb"></b></label>
-      <input type="range" id="p_mb" min="0" max="2" step="0.05"></div>
-    <div class="ctl"><label>兴趣→无聊抑制强度 <b id="v_mi"></b></label>
-      <input type="range" id="p_mi" min="0" max="2" step="0.05"></div>
-    <div class="ctl"><label>孤独→社交增益 <b id="v_ml"></b></label>
-      <input type="range" id="p_ml" min="0" max="2" step="0.05"></div>
-    <div class="ctl"><label>性欲→求偶倍率 <b id="v_mc"></b></label>
-      <input type="range" id="p_mc" min="0" max="3" step="0.1"></div>
-    <div class="ctl"><label>人工社交显著性(放一只同类进去) <b id="v_soc"></b></label>
-      <input type="range" id="p_soc" min="0" max="1" step="0.05"></div>
-    <h2 style="margin-top:16px">说话门控</h2>
-    <div class="ctl"><label>静息目标发声率 /s <b id="v_sr"></b></label>
-      <input type="range" id="p_sr" min="0" max="0.2" step="0.005"></div>
-    <div class="ctl"><label>阈值积分增益 κ <b id="v_kp"></b></label>
-      <input type="range" id="p_kp" min="0" max="6" step="0.25"></div>
-    <div class="ctl"><label>自适应阈值 <b id="v_ada"></b></label>
-      <input type="range" id="p_ada" min="0" max="1" step="1"></div>
-    <div style="color:var(--dim);font-size:11px;margin-top:10px">
-      「自适应阈值=0」用于复现固定阈值的病态（发声率失控、间隔像节拍器）。
-    </div>
-    <h2 style="margin-top:16px">认知层</h2>
-    <div class="ctl"><label>消费 LLM 输出（0=消融：只显示不改变行为）<b id="v_use"></b></label>
-      <input type="range" id="p_use" min="0" max="1" step="1"></div>
-    <div class="ctl"><label>发声时允许思考（更丰富但更慢）<b id="v_think"></b></label>
-      <input type="range" id="p_think" min="0" max="1" step="1"></div>
-    <div style="color:var(--dim);font-size:11px;margin-top:6px">
-      「消费=0」时 LLM 照常调用、台词照常说，但它的情境评估与行动意图被丢弃 ——
-      用来验证"思维真的改变了行为"还是只是装饰。
+  <!-- ============ 左：参数 ============ -->
+  <div class="col1">
+    <div class="panel">
+      <h2>参数 <span id="s_paramsrc"></span></h2>
+      <div id="controls"></div>
+      <div class="note">
+        改动即时生效（POST /api/control）。「消费 LLM 输出」置 0 即为消融：
+        认知层照常调用、台词照常说，但情境评估与行动意图被丢弃。
+      </div>
     </div>
   </div>
 
-  <div class="panel">
-    <h2>内驱力</h2>
-    <div class="chart"><canvas id="c_drv"></canvas>
+  <!-- ============ 中：观测 ============ -->
+  <div class="col2">
+    <div class="panel">
+      <h2>内驱力 <span>0–1</span></h2>
+      <div class="bars" id="drv_bars"></div>
+      <canvas id="c_drv" height="104" style="margin-top:9px"></canvas>
       <div class="legend">
-        <span><i style="background:#ff6b6b"></i>饥饿</span>
-        <span><i style="background:#4ea1ff"></i>口渴</span>
-        <span><i style="background:#ff9f43"></i>热/冷</span>
-        <span><i style="background:#42d392"></i>无聊</span>
-        <span><i style="background:#c084fc"></i>孤独</span>
-        <span><i style="background:#f43f5e"></i>威胁</span>
+        <span><i style="background:#ff6b6b"></i>饥饿</span><span><i style="background:#4ea1ff"></i>口渴</span>
+        <span><i style="background:#ff9f43"></i>热/冷</span><span><i style="background:#42d392"></i>无聊</span>
+        <span><i style="background:#c084fc"></i>孤独</span><span><i style="background:#f43f5e"></i>威胁</span>
         <span><i style="background:#f472b6"></i>性欲</span>
       </div>
     </div>
-    <h2>想说话冲动 u 与 阈值 θ（越过即开口）</h2>
-    <div class="chart"><canvas id="c_spk"></canvas>
-      <div class="legend">
-        <span><i style="background:#ffd166"></i>u_speak</span>
-        <span><i style="background:#8b93a7"></i>θ 阈值</span>
-      </div>
+
+    <div class="panel">
+      <h2>想说话的冲动 u 与阈值 θ <span>越过 θ 才调用 LLM</span></h2>
+      <canvas id="c_spk" height="104"></canvas>
+      <div class="legend"><span><i style="background:#8b93a7"></i>θ 阈值</span>
+        <span><i style="background:#ffd166"></i>u_speak</span></div>
     </div>
-    <h2>连接组读出（识别细胞放电率）</h2>
-    <div class="chart"><canvas id="c_rd"></canvas>
+
+    <div class="panel">
+      <h2>连接组读出 <span>识别细胞的放电率 Hz</span></h2>
+      <div class="bars" id="ro_bars"></div>
+      <canvas id="c_rd" height="104" style="margin-top:9px"></canvas>
       <div class="legend">
         <span><i style="background:#4ea1ff"></i>MN9 进食</span>
         <span><i style="background:#ff6b6b"></i>DNp01 逃逸</span>
@@ -137,214 +148,317 @@
         <span><i style="background:#c084fc"></i>DNp09 行走</span>
       </div>
     </div>
-    <h2>求偶 / 性欲</h2>
-    <div class="chart"><canvas id="c_court"></canvas>
+
+    <div class="panel">
+      <h2>兴趣 vs 无聊 <span>相对但不等价</span></h2>
+      <canvas id="c_int" height="104"></canvas>
       <div class="legend">
-        <span><i style="background:#f472b6"></i>性欲 sexual</span>
-        <span><i style="background:#fbbf24"></i>求偶指数 CI（近 60s 处于求偶的时间占比）</span>
-        <span><i style="background:#38bdf8"></i>社交显著性</span>
-      </div>
-      <div class="legend" style="margin-top:2px">
-        CI 为 0 不一定代表"不想"——求偶需要<span style="color:#38bdf8">视野里有同类</span>；
-        把"人工社交显著性"拉起来就能看到性欲如何转成实际求偶。
-      </div>
-    </div>
-    <h2>兴趣 vs 无聊（相对但不等价）</h2>
-    <div class="chart"><canvas id="c_int"></canvas>
-      <div class="legend">
-        <span><i style="background:#facc15"></i>兴趣（相位性，τ≈4s）</span>
-        <span><i style="background:#42d392"></i>无聊（累积量，τ≈70s）</span>
+        <span><i style="background:#facc15"></i>兴趣（相位性 τ≈4s）</span>
+        <span><i style="background:#42d392"></i>无聊（累积量 τ≈70s）</span>
         <span><i style="background:#6b7280"></i>1−无聊</span>
       </div>
-      <div class="legend" style="margin-top:2px">
-        如果兴趣只是无聊的补集，黄线应与灰虚线完全重合。<b>不会</b>——
-        兴趣能被事件瞬间激起、也衰减得快，所以会出现"兴趣已回落而无聊仍在高位"的时段。
+      <div class="note">若兴趣只是无聊的补集，黄线会与灰虚线重合——不会，兴趣能被事件瞬间激起。</div>
+    </div>
+
+    <div class="panel">
+      <h2>求偶 / 社交</h2>
+      <canvas id="c_court" height="104"></canvas>
+      <div class="legend">
+        <span><i style="background:#38bdf8"></i>社交显著性</span>
+        <span><i style="background:#f472b6"></i>性欲</span>
+        <span><i style="background:#fbbf24"></i>求偶指数 CI（近 60s 占比）</span>
       </div>
     </div>
   </div>
 
-  <div class="panel">
-    <h2>对它说话</h2>
-    <div style="display:flex;gap:6px">
-      <input id="say" placeholder="说点什么…" style="flex:1;background:#12151b;border:1px solid var(--line);
-             color:var(--fg);border-radius:6px;padding:6px 8px;font-size:12px">
-      <button id="b_say">发送</button>
+  <!-- ============ 右：对话 / 思维 / 行为 ============ -->
+  <div class="col3">
+    <div class="panel">
+      <h2>对话 <span>你的话只当刺激，不保证它回应</span></h2>
+      <div id="chat"></div>
+      <div style="display:flex;gap:6px;margin-top:8px">
+        <input id="say" placeholder="对它说点什么…" style="flex:1">
+        <button id="b_say" class="pri">发送</button>
+      </div>
     </div>
-    <div style="color:var(--dim);font-size:11px;margin:6px 0 12px">
-      你的话会变成<strong>刺激</strong>（抬高社交显著性、兴趣、发声倾向），
-      但<strong>不保证它回应</strong>——说不说仍由它自己的冲动阈值决定。
+
+    <div class="panel">
+      <h2>思维 <span>认知层内部活动</span></h2>
+      <div class="kv" id="cogkv"></div>
+      <div id="think" style="margin-top:8px"></div>
     </div>
-    <h2>思维（模型内部活动）</h2>
-    <div id="cogline" class="stat" style="font-size:11px;margin-bottom:4px">—</div>
-    <div id="think" style="height:150px;overflow-y:auto;font-size:12px;background:#12151b;
-         border:1px solid var(--line);border-radius:6px;padding:8px;margin-bottom:12px;
-         overscroll-behavior:contain"></div>
-    <h2>行为与发声</h2>
-    <div id="log"></div>
+
+    <div class="panel">
+      <h2>行为分布 <span id="s_actn"></span></h2>
+      <div class="bars" id="act_bars"></div>
+    </div>
+
+    <div class="panel">
+      <h2>事件流 <span id="s_evn"></span></h2>
+      <div id="log"></div>
+    </div>
   </div>
 </main>
-<footer>
-  行为条目：<span class="badge g">连接组</span> 表示由识别细胞读出触发；
-  <span class="badge f">回退</span> 表示该行为尚无识别通路、由手写权重触发。
-</footer>
 
 <script>
-const H = 600;                      // 历史长度
-let hist = [], lastSeq = 0, running = true;
+/* ---------------- 参数规格：分组 + 范围，UI 由它生成 ---------------- */
+const SPEC = [
+  ['脑', [
+    ['gain', '脑增益 gain', 0, 1.5, 0.05, '连接组权重总增益'],
+    ['steps', '脑步数 / tick', 0, 60, 1, '每 100ms 跑多少 ms 神经时间'],
+    ['hab', '习惯化强度', 0, 1, 0.05, '接地读出的重复抑制'],
+  ]],
+  ['感觉', [
+    ['lo', '感觉带下限', 0, 0.5, 0.01, '低于此刺激无响应'],
+    ['hi', '感觉带增量', 0.05, 1, 0.05, '可用动态范围'],
+    ['mh', '饥饿→糖 倍率', 0, 2, 0.05, ''],
+    ['mt', '威胁→loom 倍率', 0, 2, 0.05, ''],
+    ['mb', '无聊→新颖度增益', 0, 2, 0.05, ''],
+    ['ml', '孤独→社交增益', 0, 2, 0.05, ''],
+    ['mi', '兴趣→无聊抑制', 0, 2, 0.05, ''],
+    ['mc', '性欲→求偶倍率', 0, 3, 0.1, ''],
+    ['soc', '人工社交显著性', 0, 1, 0.05, '把一只同类放进视野'],
+  ]],
+  ['说话门控', [
+    ['sr', '静息目标发声率 /s', 0, 0.2, 0.005, '随内驱力上浮'],
+    ['kp', '阈值积分增益 κ', 0, 6, 0.25, '越大越强地维持目标率'],
+    ['ada', '自适应阈值', 0, 1, 1, '置 0 复现固定阈值病态'],
+  ]],
+  ['认知层', [
+    ['use', '消费 LLM 输出', 0, 1, 1, '0 = 消融：只显示不改变行为'],
+    ['think', '发声时允许思考', 0, 1, 1, '更丰富但慢得多'],
+  ]],
+];
+const PKEYS = SPEC.flatMap(g => g[1].map(x => x[0]));
 
-function draw(canvasId, series, ymax){
-  const c = document.getElementById(canvasId), dpr = devicePixelRatio||1;
-  const w = c.clientWidth, h = c.clientHeight;
-  if (c.width !== w*dpr){ c.width = w*dpr; c.height = h*dpr; }
+/* ---------------- 状态 ---------------- */
+const H = 600;
+let hist = [], lastSeq = 0, running = true, startedAt = null, tPrev = 0;
+
+/* ---------------- 生成参数控件 ---------------- */
+(function buildControls(){
+  const box = document.getElementById('controls');
+  for (const [grp, items] of SPEC){
+    const g = document.createElement('div'); g.className = 'grp';
+    const t = document.createElement('div'); t.className = 't'; t.textContent = grp; g.appendChild(t);
+    for (const [k, label, lo, hi, step, hint] of items){
+      const c = document.createElement('div'); c.className = 'ctl';
+      c.innerHTML = '<label>' + label + (hint ? ' <span class="tag">?</span>' : '') +
+                    ' <b id="v_' + k + '">–</b></label>' +
+                    '<input type="range" id="p_' + k + '" min="' + lo + '" max="' + hi + '" step="' + step + '">' +
+                    (hint ? '<div class="note">' + hint + '</div>' : '');
+      g.appendChild(c);
+    }
+    box.appendChild(g);
+  }
+  for (const k of PKEYS){
+    const el = document.getElementById('p_' + k);
+    el.addEventListener('input', () => {
+      document.getElementById('v_' + k).textContent = el.value;
+      fetch('/api/control', {method:'POST', headers:{'Content-Type':'application/json'},
+                             body: JSON.stringify({[k]: parseFloat(el.value)})});
+    });
+  }
+})();
+
+/* ---------------- 通用绘图 ---------------- */
+function draw(id, series, ymax){
+  const c = document.getElementById(id); if (!c) return;
+  const dpr = devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight;
+  if (c.width !== Math.round(w*dpr)){ c.width = Math.round(w*dpr); c.height = Math.round(h*dpr); }
   const g = c.getContext('2d'); g.setTransform(dpr,0,0,dpr,0,0);
   g.clearRect(0,0,w,h);
-  g.strokeStyle = '#1f242e'; g.lineWidth = 1;
-  for (let i=1;i<4;i++){ const y=h*i/4; g.beginPath(); g.moveTo(0,y); g.lineTo(w,y); g.stroke(); }
-  const n = series[0] ? series[0].data.length : 0;
-  if (!n) return;
+  g.strokeStyle = '#1e242e'; g.lineWidth = 1;
+  for (let i=1;i<4;i++){ const y = h*i/4; g.beginPath(); g.moveTo(0,y); g.lineTo(w,y); g.stroke(); }
+  const n = series[0] ? series[0].data.length : 0; if (!n) return;
   let mx = ymax;
-  if (mx == null){ mx = 1e-6; for (const s of series) for (const v of s.data) if (v>mx) mx=v; mx*=1.15; }
+  if (mx == null){ mx = 1e-6; for (const s of series) for (const v of s.data) if (v > mx) mx = v; mx *= 1.12; }
   for (const s of series){
-    g.strokeStyle = s.color; g.lineWidth = 1.6;
+    g.strokeStyle = s.color; g.lineWidth = 1.5;
     g.setLineDash(s.dash ? [5,4] : []);
     g.beginPath();
-    s.data.forEach((v,i)=>{ const x = w*i/(H-1), y = h-(Math.min(v,mx)/mx)*h;
-      i? g.lineTo(x,y) : g.moveTo(x,y); });
+    s.data.forEach((v,i) => { const x = w*i/(H-1), y = h - Math.min(v,mx)/mx*h;
+      i ? g.lineTo(x,y) : g.moveTo(x,y); });
     g.stroke();
   }
   g.setLineDash([]);
 }
 
-function push(state){
-  hist.push(state);
-  if (hist.length > H) { hist.shift(); }
+/* 条形：只改宽度，不重建 DOM（避免滚动/闪烁） */
+function bars(containerId, rows, maxv){
+  const box = document.getElementById(containerId);
+  if (box.childElementCount !== rows.length){
+    box.innerHTML = rows.map(r =>
+      '<div class="bar"><span class="lab">' + r.label + '</span>' +
+      '<span class="trk"><span class="fil" style="background:' + r.color + '"></span></span>' +
+      '<span class="num"></span></div>').join('');
+  }
+  [...box.children].forEach((el, i) => {
+    const v = rows[i].v, m = maxv || 1;
+    el.children[1].children[0].style.width = Math.max(0, Math.min(1, v/m))*100 + '%';
+    el.children[2].textContent = rows[i].fmt ? rows[i].fmt(v) : v.toFixed(2);
+  });
+}
+
+const DRV = [['hunger','饥饿','#ff6b6b'],['thirst','口渴','#4ea1ff'],['heat','热','#ff9f43'],
+             ['cold','冷','#93c5fd'],['dry','干燥','#fbbf24'],['humid','潮湿','#38bdf8'],
+             ['lonely','孤独','#c084fc'],['sexual','性欲','#f472b6'],['fatigue','疲劳','#a3a3a3'],
+             ['boredom','无聊','#42d392'],['threat','威胁','#f43f5e']];
+const RO   = [['eat','MN9 进食','#4ea1ff'],['flee','DNp01 逃逸','#ff6b6b'],
+              ['approach','DNp20 转向','#42d392'],['explore','DNp09 行走','#c084fc']];
+
+/* ---------------- 主循环 ---------------- */
+function push(s){
+  hist.push(s); if (hist.length > H) hist.shift();
+  if (startedAt === null) startedAt = Date.now();
+
   draw('c_drv', [
-    {color:'#ff6b6b', data: hist.map(s=>s.d.hunger)},
-    {color:'#4ea1ff', data: hist.map(s=>s.d.thirst)},
-    {color:'#ff9f43', data: hist.map(s=>Math.max(s.d.heat,s.d.cold))},
-    {color:'#42d392', data: hist.map(s=>s.d.boredom)},
-    {color:'#c084fc', data: hist.map(s=>s.d.lonely)},
-    {color:'#f43f5e', data: hist.map(s=>s.d.threat)},
-    {color:'#f472b6', data: hist.map(s=>s.d.sexual)},
+    {color:'#ff6b6b', data: hist.map(x=>x.d.hunger)}, {color:'#4ea1ff', data: hist.map(x=>x.d.thirst)},
+    {color:'#ff9f43', data: hist.map(x=>Math.max(x.d.heat,x.d.cold))},
+    {color:'#42d392', data: hist.map(x=>x.d.boredom)}, {color:'#c084fc', data: hist.map(x=>x.d.lonely)},
+    {color:'#f43f5e', data: hist.map(x=>x.d.threat)}, {color:'#f472b6', data: hist.map(x=>x.d.sexual)},
   ], 1);
-  draw('c_spk', [
-    {color:'#8b93a7', data: hist.map(s=>s.theta)},
-    {color:'#ffd166', data: hist.map(s=>s.u_speak)},
-  ], null);
-  draw('c_rd', [
-    {color:'#4ea1ff', data: hist.map(s=>s.ro.eat)},
-    {color:'#ff6b6b', data: hist.map(s=>s.ro.flee)},
-    {color:'#42d392', data: hist.map(s=>s.ro.approach)},
-    {color:'#c084fc', data: hist.map(s=>s.ro.explore)},
-  ], null);
+  draw('c_spk', [{color:'#8b93a7', data: hist.map(x=>x.theta)},
+                 {color:'#ffd166', data: hist.map(x=>x.u_speak)}], null);
+  draw('c_rd', RO.map(r => ({color:r[2], data: hist.map(x=>x.ro[r[0]]||0)})), null);
+  draw('c_int', [{color:'#6b7280', dash:true, data: hist.map(x=>1-x.d.boredom)},
+                 {color:'#42d392', data: hist.map(x=>x.d.boredom)},
+                 {color:'#facc15', data: hist.map(x=>x.interest)}], 1);
+  draw('c_court', [{color:'#38bdf8', data: hist.map(x=>x.social)},
+                   {color:'#f472b6', data: hist.map(x=>x.d.sexual)},
+                   {color:'#fbbf24', data: hist.map(x=>x.ci)}], 1);
 
-  draw('c_court', [
-    {color:'#38bdf8', data: hist.map(s=>s.social)},
-    {color:'#f472b6', data: hist.map(s=>s.d.sexual)},
-    {color:'#fbbf24', data: hist.map(s=>s.ci)},
-  ], 1);
+  bars('drv_bars', DRV.map(d => ({label:d[1], color:d[2], v:s.d[d[0]]})), 1);
+  bars('ro_bars',  RO.map(r => ({label:r[1], color:r[2], v:s.ro[r[0]]||0,
+                                 fmt:v=>v.toFixed(1)+' Hz'})), null);
 
-  draw('c_int', [
-    {color:'#6b7280', dash:true, data: hist.map(s=>1-s.d.boredom)},
-    {color:'#42d392', data: hist.map(s=>s.d.boredom)},
-    {color:'#facc15', data: hist.map(s=>s.interest)},
-  ], 1);
+  // 顶栏
+  document.getElementById('s_t').textContent = s.t.toFixed(0);
+  const up = Math.floor((Date.now()-startedAt)/1000);
+  document.getElementById('s_up').textContent = Math.floor(up/60) + ':' + String(up%60).padStart(2,'0');
+  document.getElementById('s_fps').textContent = s.fps.toFixed(1);
+  document.getElementById('s_share').textContent = s.n_act ? Math.round(100*s.n_grounded/s.n_act) : 0;
+  document.getElementById('s_int').textContent = s.interest.toFixed(2);
+  document.getElementById('s_sex').textContent = s.d.sexual.toFixed(2);
+  document.getElementById('s_ci').textContent  = s.ci.toFixed(2);
 
-  document.getElementById('s_sex').textContent = state.d.sexual.toFixed(2);
-  document.getElementById('s_int').textContent = state.interest.toFixed(2);
-  document.getElementById('s_ci').textContent = state.ci.toFixed(2);
-  document.getElementById('s_t').textContent = state.t.toFixed(0);
-  document.getElementById('s_tick').textContent = state.tick;
-  document.getElementById('s_fps').textContent = state.fps.toFixed(1);
-  document.getElementById('s_share').textContent = state.n_act ? (100*state.n_grounded/state.n_act).toFixed(0) : '0';
-  const m = document.getElementById('s_mode');
-  m.textContent = state.llm === 'openai' ? 'LLM 端点' : '模板发声';
-  m.className = 'stat badge ' + (state.llm==='openai'?'g':'f');
+  const ll = s.llm || {};
+  const el = document.getElementById('s_llm');
+  el.textContent = '认知层 ' + (ll.busy ? '生成中' : '空闲') + ' · ' + (ll.last_ms||0) + 'ms · ' +
+                   (ll.calls||0) + ' 次';
+  el.className = 'pill ' + (ll.err ? 'b' : (ll.busy ? 'w' : 'g'));
+  const gt = document.getElementById('s_gate');
+  gt.textContent = '思考开关=' + (ll.think_mode || '-');
+  gt.className = 'pill ' + (ll.think_mode === 'kwargs' ? 'g' : 'w');
 
-  const log = document.getElementById('log');
-  const th = document.getElementById('think');
-  const atBottom = th.scrollHeight - th.scrollTop - th.clientHeight < 40;
-  for (const e of state.events){
+  // 认知面板
+  document.getElementById('cogkv').innerHTML =
+    '<span>情境评估</span><b>novelty ' + s.appr.novelty + ' · threat ' + s.appr.threat +
+      ' · control ' + s.appr.control + (s.appr_active ? '' : '（已过期）') + '</b>' +
+    '<span>想做</span><b>' + s.want + '</b>' +
+    '<span>消费 / 丢弃</span><b>' + s.llm_consumed + ' / ' + s.llm_discarded + '</b>' +
+    '<span>待生成</span><b>' + s.llm_pending + '</b>' +
+    '<span>模型</span><b>' + (ll.model || 'qwen3.8-27b-uncensored') + '</b>' +
+    (ll.err ? '<span>错误</span><b style="color:#ff6b6b">' + String(ll.err).slice(0,70) + '</b>' : '');
+
+  // 行为分布
+  const ah = s.actions || {}, atot = Object.values(ah).reduce((a,b)=>a+b,0) || 1;
+  const rows = Object.entries(ah).sort((a,b)=>b[1]-a[1]).map(([k,v]) => ({
+    label:k, color:'#4ea1ff', v:v, fmt:x=>x+' ('+Math.round(100*v/atot)+'%)'}));
+  bars('act_bars', rows, Math.max(1, ...Object.values(ah)));
+  document.getElementById('s_actn').textContent = '共 ' + atot + ' 次动作';
+
+  // 事件路由：spk/hear → 对话气泡；tht → 思维；其余 → 事件流
+  const chat = document.getElementById('chat'), th = document.getElementById('think'),
+        log = document.getElementById('log');
+  const stick = el2 => el2.scrollHeight - el2.scrollTop - el2.clientHeight < 40;
+  const chatStick = stick(chat), thStick = stick(th), logStick = stick(log);
+  let nev = 0;
+  for (const e of s.events){
+    nev++;
     if (e.kind === 'tht'){
-      // 思维追加式渲染：不重建 DOM，否则滚动位置会被重置
-      const d = document.createElement('div');
-      d.className = 'row';
-      d.innerHTML = '<span class="t">'+e.t.toFixed(0)+'s</span><span class="v">'+e.text+'</span>';
+      const d = document.createElement('div'); d.className = 'th';
+      d.innerHTML = '<span class="t">' + e.t.toFixed(0) + 's</span>' + e.text;
       th.appendChild(d);
-      while (th.childElementCount > 120) th.removeChild(th.firstChild);
-      continue;
+    } else if (e.kind === 'spk' || e.kind === 'hear'){
+      const d = document.createElement('div');
+      d.className = 'msg ' + (e.kind === 'spk' ? 'fly' : 'usr');
+      d.textContent = e.text.replace(/<[^>]*>/g,'');
+      const m = document.createElement('span'); m.className = 'meta';
+      m.textContent = (e.kind === 'spk' ? '🪰 ' : '你 ') + e.t.toFixed(0) + 's';
+      d.appendChild(m); chat.appendChild(d);
+    } else {
+      const d = document.createElement('div');
+      d.className = 'ev ' + (e.kind||'');
+      d.innerHTML = '<span class="t">' + e.t.toFixed(0) + 's</span><span>' + e.text + '</span>';
+      log.prepend(d);
     }
-    const div = document.createElement('div');
-    div.className = 'row ' + (e.kind==='spk'?'spk':(e.kind==='fb'?'fb':(e.kind==='hear'?'act':'act')));
-    div.innerHTML = '<span class="t">'+e.t.toFixed(0)+'s</span><span class="v">'+e.text+'</span>';
-    log.prepend(div);
   }
-  if (atBottom) th.scrollTop = th.scrollHeight;   // 粘性滚动
-  lastSeq = state.seq;
-
-  const ll = state.llm || {};
-  document.getElementById('s_llm').textContent =
-    (ll.busy ? '生成中' : '空闲') + ' · ' + (ll.last_ms||0) + 'ms · ' + (ll.think_mode||'-');
-  const cg = document.getElementById('cogline');
-  cg.textContent = '评估 novelty=' + state.appr.novelty + ' threat=' + state.appr.threat +
-    ' control=' + state.appr.control + ' | 想做=' + state.want +
-    ' | 消费 ' + state.llm_consumed + ' / 丢弃 ' + state.llm_discarded +
-    (state.llm_pending ? ' | 待生成 ' + state.llm_pending : '') +
-    (ll.err ? ' | err ' + String(ll.err).slice(0,40) : '');
-  while (log.childElementCount > 220) log.removeChild(log.lastChild);
+  lastSeq = s.seq;
+  while (chat.childElementCount > 200) chat.removeChild(chat.firstChild);
+  while (th.childElementCount > 150) th.removeChild(th.firstChild);
+  while (log.childElementCount > 200) log.removeChild(log.lastChild);
+  if (chatStick) chat.scrollTop = chat.scrollHeight;
+  if (thStick) th.scrollTop = th.scrollHeight;
+  if (logStick) log.scrollTop = 0;
+  document.getElementById('s_evn').textContent = '累计 ' + lastSeq + ' 条';
+  if (nev && tPrev !== s.t) { /* 有新事件时不做额外动作 */ }
+  tPrev = s.t;
 }
 
-const P = ['gain','steps','hab','lo','hi','mh','mt','mb','mi','ml','mc','soc','sr','kp','ada','use','think'];
-function bind(){
-  for (const k of P){
-    const el = document.getElementById('p_'+k);
-    el.addEventListener('input', ()=>{
-      document.getElementById('v_'+k).textContent = el.value;
-      fetch('/api/control', {method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({[k]: parseFloat(el.value)})});
-    });
-  }
-}
-function applyParams(p){
-  const map = {gain:'p_gain',steps:'p_steps',hab:'p_hab',lo:'p_lo',hi:'p_hi',
-               mh:'p_mh',mt:'p_mt',mb:'p_mb',mi:'p_mi',ml:'p_ml',mc:'p_mc',soc:'p_soc',
-               sr:'p_sr',kp:'p_kp',ada:'p_ada',use:'p_use',think:'p_think'};
-  for (const k in map){
-    const el = document.getElementById(map[k]);
-    if (document.activeElement !== el) el.value = p[k];
-    document.getElementById('v_'+k).textContent = p[k];
-  }
-}
-document.getElementById('b_run').onclick = e => {
-  running = !running;
-  fetch('/api/control',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({run: running})});
-  e.target.textContent = running ? '暂停' : '继续';
-  e.target.classList.toggle('on', !running);
-};
-document.getElementById('b_reset').onclick = () => {
-  hist = []; lastSeq = 0; document.getElementById('log').innerHTML='';
-  fetch('/api/reset', {method:'POST'});
-};
+/* ---------------- 交互 ---------------- */
 document.getElementById('b_say').onclick = () => {
-  const el = document.getElementById('say');
-  const t = el.value.trim();
-  if (!t) return;
+  const el = document.getElementById('say'); const t = el.value.trim(); if (!t) return;
   el.value = '';
   fetch('/api/say', {method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({text: t})});
+                     body: JSON.stringify({text:t})});
 };
 document.getElementById('say').addEventListener('keydown', ev => {
   if (ev.key === 'Enter') document.getElementById('b_say').click();
 });
-bind();
+document.getElementById('b_run').onclick = ev => {
+  running = !running;
+  fetch('/api/control', {method:'POST', headers:{'Content-Type':'application/json'},
+                         body: JSON.stringify({run: running ? 1 : 0})});
+  ev.target.textContent = running ? '暂停' : '继续';
+  ev.target.classList.toggle('on', !running);
+};
+document.getElementById('b_reset').onclick = () => {
+  hist = []; lastSeq = 0; startedAt = null;
+  document.getElementById('chat').innerHTML = '';
+  document.getElementById('think').innerHTML = '';
+  document.getElementById('log').innerHTML = '';
+  fetch('/api/reset', {method:'POST'});
+};
+document.getElementById('b_export').onclick = () => {
+  const blob = new Blob([JSON.stringify({exported: new Date().toISOString(),
+    samples: hist, events: [...document.querySelectorAll('#log .ev')].length}, null, 1)],
+    {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'flytrace-' + Date.now() + '.json';
+  a.click();
+  URL.revokeObjectURL(a.href);
+};
+
+/* ---------------- 轮询 ---------------- */
 async function loop(){
   try{
-    const r = await fetch('/api/state?since='+lastSeq); const s = await r.json();
-    if (hist.length === 0) applyParams(s.params);
+    const r = await fetch('/api/state?since=' + lastSeq);
+    const s = await r.json();
+    if (hist.length === 0) syncParams(s.params);
     push(s);
-  }catch(e){}
+  } catch(e){}
   setTimeout(loop, 250);
+}
+function syncParams(p){
+  for (const k of PKEYS){
+    const el = document.getElementById('p_' + k);
+    if (el && document.activeElement !== el) el.value = p[k];
+    const v = document.getElementById('v_' + k);
+    if (v) v.textContent = p[k];
+  }
+  document.getElementById('s_paramsrc').textContent = '（界面改动即时下发）';
 }
 loop();
 </script>

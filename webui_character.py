@@ -7,7 +7,7 @@ webui_character.py — 果蝇数字角色的 WebUI 观测台后端
 - HTTP: /  (观测台页面)  /api/state  /api/control  /api/reset
 - 端口 8000 (避开 Colab 自带的 8080), 交给 cloudflared 暴露
 """
-import json, math, os, threading, time
+import base64, json, math, os, threading, time
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -15,8 +15,8 @@ import numpy as np
 import pandas as pd
 import torch
 
-OUT = os.environ.get("FLY_DATA", "/content/fly/normalized")
-UI_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui.html")
+OUT = "/content/fly/normalized"
+UI_B64 = "__UI_B64__"
 PORT = int(os.environ.get("FLY_UI_PORT", "8000"))
 
 # ------------------------------------------------------------------ 连接组
@@ -134,10 +134,14 @@ class Char:
         self.ro = {b: 0.0 for b in GROUND}
         self.u_speak = 0.0; self.theta = 1.0; self.refr = 0.0; self.rum = 0.0
         self.speak_times = deque(); self.events = []; self.seq = 0
+        self.court_log = deque()      # (起始时刻, 持续时长) -> 用于算求偶指数
+        self.ci = 0.0                 # 求偶指数: 近 60s 处于求偶行为的时间占比
+        self.social = 0.0             # 社交显著性(视野内有无同类)
         self.n_act = 0; self.n_grounded = 0; self.fps = 0.0
         self.rng = np.random.default_rng(7)
         self.params = dict(gain=0.65, steps=15, hab=0.7, lo=0.10, hi=0.40,
-                           mh=1.0, mt=1.0, mb=1.0, ml=1.0, sr=0.05, kp=2.0, ada=1.0, run=1.0)
+                           mh=1.0, mt=1.0, mb=1.0, ml=1.0, mc=1.0, soc=0.0,
+                           sr=0.05, kp=2.0, ada=1.0, run=1.0)
 
     def drives(self):
         b, wd, t = self.body, self.world, self.t
@@ -160,6 +164,17 @@ class Char:
         self.events.append({"seq": self.seq, "t": round(self.t, 1), "kind": kind, "text": text})
         if len(self.events) > 500:
             self.events = self.events[-200:]
+
+    def courtship_index(self, win=60.0):
+        """求偶指数 = 观察窗口内处于求偶行为的时间占比。
+
+        沿用果蝇行为学里 CI(courtship index) 的口径: 是"时间占比"而不是加权和,
+        因此可以直接解释、也可以直接和文献里的 CI 对照。
+        """
+        now = self.t
+        while self.court_log and self.court_log[0][0] + self.court_log[0][1] < now - win:
+            self.court_log.popleft()
+        return min(1.0, sum(d for t0, d in self.court_log if t0 >= now - win) / win)
 
     def step(self, dt):
         P = self.params; b, wd, a = self.body, self.world, self.aff
@@ -195,6 +210,8 @@ class Char:
         sugar = float(np.clip(wd["food"], 0, 1)) * (P["lo"] + P["hi"] * min(1.0, P["mh"] * d["hunger"]))
         loom = (P["lo"] + P["hi"] * min(1.0, P["mt"] * d["threat"])) if d["threat"] > 0.02 else 0.0
         social = 1.0 if wd["flies_near"] > 0 else 0.0
+        social = max(social, float(P["soc"]))      # 人工社交显著性(把一只同类放进视野)
+        self.social = social
         walk_vis = float(np.clip(wd["novelty"], 0, 1)) * (P["lo"] + P["hi"] * min(1.0, P["mb"] * d["boredom"]))
         turn_vis = social * (P["lo"] + P["hi"] * min(1.0, P["ml"] * d["lonely"]))
         self.ro = brain_step({"sugar": sugar, "loom": loom,
@@ -206,6 +223,8 @@ class Char:
             if self.cooldown[name] > 0:
                 continue
             drv = base + sum(wt * d[k] for k, wt in wts.items())
+            if name == "court":        # 性欲->求偶 的倍率可调
+                drv = base + wts["sexual"] * P["mc"] * d["sexual"] + wts["lonely"] * d["lonely"]
             if name in GROUND:
                 term = (self.ro[name] / GROUND[name][1]) * (1.0 - P["hab"] * min(1.0, self.hab[name]))
                 src = "connectome"
@@ -235,7 +254,10 @@ class Char:
             elif best == "approach":
                 if wd["flies_near"] > 0: b["last_social"] = self.t
                 elif self.rng.random() < 0.25: wd["flies_near"] += 1
-            elif best == "court" and wd["flies_near"] > 0: b["last_mating"] = self.t
+            elif best == "court":
+                self.court_log.append((self.t, BEH["court"][3]))    # 记录求偶时长
+                if social > 0 or wd["flies_near"] > 0:
+                    b["last_mating"] = self.t
             elif best == "explore":
                 b["boredom"] = max(0.0, b["boredom"] - 0.10)
                 wd["novelty"] = max(0.0, wd["novelty"] - 0.35)
@@ -288,6 +310,7 @@ class Char:
             self.theta += 0.15
             self.u_speak = 0.0
             self.rum = min(1.0, self.rum + 0.5)
+        self.ci = self.courtship_index()
         self.t += dt
 
 
@@ -300,6 +323,7 @@ def snapshot(since):
             "t": round(c.t, 1), "tick": c.tick, "fps": round(c.fps, 1),
             "d": {k: round(v, 3) for k, v in c.drives().items()},
             "u_speak": round(c.u_speak, 3), "theta": round(c.theta, 3),
+            "ci": round(c.ci, 3), "social": round(c.social, 3),
             "ro": {k: round(v, 2) for k, v in c.ro.items()},
             "n_act": c.n_act, "n_grounded": c.n_grounded,
             "llm": os.environ.get("FLY_LLM", "mock"),
@@ -328,8 +352,7 @@ class H(BaseHTTPRequestHandler):
                 except Exception: since = 0
             self._send(200, json.dumps(snapshot(since)).encode("utf-8"))
         elif self.path in ("/", "/index.html"):
-            with open(UI_PATH, "rb") as fh:
-                self._send(200, fh.read(), "text/html; charset=utf-8")
+            self._send(200, base64.b64decode(UI_B64), "text/html; charset=utf-8")
         else:
             self._send(404, b"{}")
 

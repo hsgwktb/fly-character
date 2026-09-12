@@ -50,6 +50,8 @@
   <span class="stat">tick=<b id="s_tick">0</b></span>
   <span class="stat">fps=<b id="s_fps">0</b></span>
   <span class="stat">连接组驱动 <b id="s_share">0</b>%</span>
+  <span class="stat">性欲 <b id="s_sex">0.00</b></span>
+  <span class="stat">求偶指数 CI <b id="s_ci">0.00</b></span>
   <span class="stat badge" id="s_mode">—</span>
   <button id="b_run">暂停</button>
   <button id="b_reset">重置</button>
@@ -77,6 +79,10 @@
       <input type="range" id="p_mb" min="0" max="2" step="0.05"></div>
     <div class="ctl"><label>孤独→社交增益 <b id="v_ml"></b></label>
       <input type="range" id="p_ml" min="0" max="2" step="0.05"></div>
+    <div class="ctl"><label>性欲→求偶倍率 <b id="v_mc"></b></label>
+      <input type="range" id="p_mc" min="0" max="3" step="0.1"></div>
+    <div class="ctl"><label>人工社交显著性(放一只同类进去) <b id="v_soc"></b></label>
+      <input type="range" id="p_soc" min="0" max="1" step="0.05"></div>
     <h2 style="margin-top:16px">说话门控</h2>
     <div class="ctl"><label>静息目标发声率 /s <b id="v_sr"></b></label>
       <input type="range" id="p_sr" min="0" max="0.2" step="0.005"></div>
@@ -99,6 +105,7 @@
         <span><i style="background:#42d392"></i>无聊</span>
         <span><i style="background:#c084fc"></i>孤独</span>
         <span><i style="background:#f43f5e"></i>威胁</span>
+        <span><i style="background:#f472b6"></i>性欲</span>
       </div>
     </div>
     <h2>想说话冲动 u 与 阈值 θ（越过即开口）</h2>
@@ -115,6 +122,18 @@
         <span><i style="background:#ff6b6b"></i>DNp01 逃逸</span>
         <span><i style="background:#42d392"></i>DNp20 转向</span>
         <span><i style="background:#c084fc"></i>DNp09 行走</span>
+      </div>
+    </div>
+    <h2>求偶 / 性欲</h2>
+    <div class="chart"><canvas id="c_court"></canvas>
+      <div class="legend">
+        <span><i style="background:#f472b6"></i>性欲 sexual</span>
+        <span><i style="background:#fbbf24"></i>求偶指数 CI（近 60s 处于求偶的时间占比）</span>
+        <span><i style="background:#38bdf8"></i>社交显著性</span>
+      </div>
+      <div class="legend" style="margin-top:2px">
+        CI 为 0 不一定代表"不想"——求偶需要<span style="color:#38bdf8">视野里有同类</span>；
+        把"人工社交显著性"拉起来就能看到性欲如何转成实际求偶。
       </div>
     </div>
   </div>
@@ -163,6 +182,7 @@ function push(state){
     {color:'#42d392', data: hist.map(s=>s.d.boredom)},
     {color:'#c084fc', data: hist.map(s=>s.d.lonely)},
     {color:'#f43f5e', data: hist.map(s=>s.d.threat)},
+    {color:'#f472b6', data: hist.map(s=>s.d.sexual)},
   ], 1);
   draw('c_spk', [
     {color:'#8b93a7', data: hist.map(s=>s.theta)},
@@ -175,6 +195,14 @@ function push(state){
     {color:'#c084fc', data: hist.map(s=>s.ro.explore)},
   ], null);
 
+  draw('c_court', [
+    {color:'#38bdf8', data: hist.map(s=>s.social)},
+    {color:'#f472b6', data: hist.map(s=>s.d.sexual)},
+    {color:'#fbbf24', data: hist.map(s=>s.ci)},
+  ], 1);
+
+  document.getElementById('s_sex').textContent = state.d.sexual.toFixed(2);
+  document.getElementById('s_ci').textContent = state.ci.toFixed(2);
   document.getElementById('s_t').textContent = state.t.toFixed(0);
   document.getElementById('s_tick').textContent = state.tick;
   document.getElementById('s_fps').textContent = state.fps.toFixed(1);
@@ -194,7 +222,7 @@ function push(state){
   while (log.childElementCount > 220) log.removeChild(log.lastChild);
 }
 
-const P = ['gain','steps','hab','lo','hi','mh','mt','mb','ml','sr','kp','ada'];
+const P = ['gain','steps','hab','lo','hi','mh','mt','mb','ml','mc','soc','sr','kp','ada'];
 function bind(){
   for (const k of P){
     const el = document.getElementById('p_'+k);
@@ -207,7 +235,8 @@ function bind(){
 }
 function applyParams(p){
   const map = {gain:'p_gain',steps:'p_steps',hab:'p_hab',lo:'p_lo',hi:'p_hi',
-               mh:'p_mh',mt:'p_mt',mb:'p_mb',ml:'p_ml',sr:'p_sr',kp:'p_kp',ada:'p_ada'};
+               mh:'p_mh',mt:'p_mt',mb:'p_mb',ml:'p_ml',mc:'p_mc',soc:'p_soc',
+               sr:'p_sr',kp:'p_kp',ada:'p_ada'};
   for (const k in map){
     const el = document.getElementById(map[k]);
     if (document.activeElement !== el) el.value = p[k];

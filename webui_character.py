@@ -16,7 +16,8 @@ import pandas as pd
 import torch
 
 from fly_llm import (FlyLLM, _post as llm_post,
-                     SYSTEM as DEFAULT_SYSTEM, REPLY_SUFFIX as DEFAULT_REPLY_SUFFIX)
+                     SYSTEM as DEFAULT_SYSTEM, REPLY_SUFFIX as DEFAULT_REPLY_SUFFIX,
+                     DEFAULT_WHO as DEFAULT_WHO_PROMPT)
 
 OUT = os.environ.get("FLY_DATA", "/content/fly/normalized")
 UI_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui.html")
@@ -30,8 +31,9 @@ PROMPTS_FILE = os.environ.get(
     "FLY_PROMPTS_FILE",
     os.path.join(os.path.dirname(os.path.abspath(OUT)), "prompts.json"))
 DEFAULT_PROMPTS = {"system": DEFAULT_SYSTEM, "channel": "只输出一个很短的中文句子。",
+                   "who": DEFAULT_WHO_PROMPT,
                    "reply": DEFAULT_REPLY_SUFFIX}
-PROMPT_KEYS = ("system", "channel", "reply")
+PROMPT_KEYS = ("system", "channel", "who", "reply")
 PROMPTS = dict(DEFAULT_PROMPTS)
 TEMPLATES = [None] * 5      # 5 个存档位；每个槽是 None 或 {name, system, channel, reply}
 
@@ -71,6 +73,7 @@ def _clean_templates(t):
 def _apply_prompts():
     LLM.system_prompt = PROMPTS["system"]
     LLM.reply_prompt = PROMPTS["reply"]
+    LLM.who_prompt = PROMPTS["who"]
 
 
 def _save_prompts_file():
@@ -237,7 +240,7 @@ TEMPL = {
     "cold": ["冷得动不了。", "得挪到暖和点的地方。"],
     "dry": ["空气干得刺人。", "得找个潮一点的地方。"],
     "humid": ["湿气黏在翅膀上。", "浑身发潮，不舒服。"],
-    "lonely": ["这么久都没有别的果蝇了。", "有点想凑过去。"],
+    "lonely": ["这么久都没有别的同类了。", "有点想凑过去。"],
     "sexual": ["空气里有股气味，坐不住。", "该去找它了。"],
     "fatigue": ["累了，想歇会儿。", "翅膀沉得抬不起来。"],
     "threat": ["有东西过来了，快跑！", "不对劲，得闪开！"],
@@ -374,6 +377,9 @@ class Char:
             "recent_thoughts": [x["thought"] for x in list(self.thoughts)[-3:]],
             "recent_says": [x["say"] for x in list(self.says)[-3:]],
             "heard_from_outside": [m["text"] for m in list(self.external)[-3:]],
+            # 明确"谁在跟它说话"。缺这一项时模型会拿 flies_near 等数字去猜,
+            # 实测后果是猫人设下把对话者当成苍蝇。
+            "interlocutor": PROMPTS["who"],
         }
 
     def hear(self, text: str) -> None:

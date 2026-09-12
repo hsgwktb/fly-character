@@ -71,8 +71,15 @@ SYSTEM = (
 )
 
 # 强制回复模式追加在对方那句话之后的指令。与 SYSTEM 一样，可在 WebUI 齿轮面板里改。
-REPLY_SUFFIX = ("你必须回一句 —— 用你果蝇的身份回它，"
-                "可以短、可以不耐烦、可以答非所问，但 say 不能为空。")
+# 注意: 这里**不能写死物种** —— 人设改成别的角色后, 写死的"用你果蝇的身份"会让它
+# 继续把自己和对话者都当成昆虫(实测踩到过: 换成猫人设后它把说话的人当苍蝇)。
+# 身份一律由系统提示词决定。
+REPLY_SUFFIX = ("你必须回一句 —— 用你自己的身份回它(以系统提示词里设定的人设说话), "
+                "可以短、可以不耐烦、可以答非所问, 但 say 不能为空。")
+
+# 对话者身份: 明确告诉它"是谁在跟它说话"。缺了这一句, 模型会拿状态包里的
+# flies_near 之类的数字去猜, 常见后果就是把说话的人当成同类或昆虫。
+DEFAULT_WHO = "一个人类观察者（不是你的同类，也不是昆虫）"
 
 
 class FlyLLM:
@@ -87,6 +94,7 @@ class FlyLLM:
         # 提示词可在 WebUI 齿轮面板热覆盖（见 webui_character.py），改完不用重启进程。
         self.system_prompt = SYSTEM
         self.reply_prompt = REPLY_SUFFIX
+        self.who_prompt = DEFAULT_WHO
         self.deadline = deadline
         self.timeout = timeout
         self.think_mode = self._detect_think_mode()
@@ -203,7 +211,8 @@ class FlyLLM:
         # 强制回复模式：明确告诉它有人在说话、必须回一句
         reply_to = (packet or {}).get("reply_to")
         if reply_to:
-            sysmsg += ("\n刚才有东西在对你说：「" + str(reply_to)[:120] + "」。"
+            who = self.who_prompt or DEFAULT_WHO
+            sysmsg += ("\n" + who + "在对你说：「" + str(reply_to)[:120] + "」。"
                        + (self.reply_prompt or REPLY_SUFFIX))
 
         payload = {

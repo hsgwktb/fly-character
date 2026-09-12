@@ -61,8 +61,8 @@ const mk = id => (reg[id] = Object.assign(new El(), {id}));
 ['s_t','s_up','s_fps','s_share','s_int','s_sex','s_ci','s_llm','s_gate','s_actn','s_evn',
  's_paramsrc','s_dialogue','c_drv','c_spk','c_rd','c_int','c_court','drv_bars','ro_bars',
  'act_bars','chat','think','log','cogkv','spkkv','say','b_say','b_run','b_reset','b_export','controls',
- 'b_gear','gearwin','gwt','gwb','b_gwclose','p_system','p_channel','p_reply','b_psave','b_preset',
- 'p_saved','slots','p_file',
+ 'b_gear','gearwin','gwt','gwb','b_gwclose','g_system','g_channel','g_who','g_reply',
+ 'b_psave','b_preset','g_saved','slots','g_file',
 ].forEach(mk);
 // 滑块由 buildControls() 生成，假环境要预注册
 ['gain','steps','hab','lo','hi','mh','mt','mb','mi','ml','mc','soc',
@@ -95,7 +95,8 @@ const state = {
         'use','think','reply','run'].map((k, i) => [k, i === 0 ? 0.65 : 0])]),
   seq: 6, reply_mode: 1, unanswered: 1,
   prompts: {system: '你是一只果蝇。{"thought": "", "say": ""}', channel: '只输出一个很短的中文句子。',
-            reply: '你必须回一句 —— 用你果蝇的身份回它。'},
+            who: '一个人类观察者（不是你的同类，也不是昆虫）',
+            reply: '你必须回一句 —— 用你自己的身份回它。'},
   templates: [null, {name: '模板B', system: 'S2{"thought":1}', channel: 'C2', reply: 'R2'},
               null, null, null],
   prompts_file: '/content/fly/prompts.json',
@@ -123,6 +124,27 @@ sandbox.window = sandbox;
 vm.createContext(sandbox);
 
 let rc = 0;
+
+/* ---------- 静态检查：DOM id 不能重复 ----------
+ * 背景：提示词字段曾用 id="p_reply"，与参数滑块 '"p_" + "reply"' 撞了同一个 id。
+ * getElementById 只返回 DOM 里靠前的那个（滑块），于是"保存提示词"读到的是滑块的值 ——
+ * 线上提示词被写坏成 "1"。假 DOM 是扁平映射（后注册的覆盖先注册的），
+ * 天生抓不到这种冲突，所以必须在这里静态查。
+ */
+{
+  const staticIds = [...html.matchAll(/id="([^"]+)"/g)].map(x => x[1]);
+  const spec = html.slice(html.indexOf('const SPEC'), html.indexOf('const PKEYS'));
+  const keys = [...spec.matchAll(/\['([a-z_0-9]+)',\s*'/g)].map(x => x[1]);
+  const all = staticIds.concat(keys.map(k => 'p_' + k), keys.map(k => 'v_' + k));
+  const dup = [...new Set(all.filter((x, i) => all.indexOf(x) !== i))];
+  if (dup.length) {
+    console.error('✗ 重复的 DOM id: ' + dup.join(', ') +
+                  ' —— getElementById 会拿到靠前的那个，读写都会错位');
+    rc = 1;
+  } else {
+    console.log('✓ 无重复 DOM id（含动态生成的滑块 id）');
+  }
+}
 try {
   vm.runInContext(js, sandbox, {filename: 'ui.html<script>'});
   console.log('✓ 脚本加载');
@@ -157,12 +179,15 @@ if (!rc) {
   else console.log('✓ 发声门控读数已渲染（间隔均值 / CV / 脑项 / vocal）');
 
   // 齿轮面板：三段落入输入框 + 5 个模板槽渲染 + 二次 push 不许覆盖输入框
-  const psys = reg.p_system.value || '';
-  const okSys = psys.indexOf('果蝇') >= 0 && (reg.p_channel.value || '').length > 0
-             && (reg.p_reply.value || '').length > 0;
-  console.log((okSys ? '✓' : '✗') + ' 三段提示词已灌入输入框（system=' +
+  const psys = reg.g_system.value || '';
+  const okSys = psys.indexOf('果蝇') >= 0 && (reg.g_channel.value || '').length > 0
+             && (reg.g_who.value || '').length > 0 && (reg.g_reply.value || '').length > 0;
+  console.log((okSys ? '✓' : '✗') + ' 四段提示词已灌入输入框（system=' +
               JSON.stringify(psys.slice(0, 12)) + '）');
   if (!okSys) rc = 1;
+  const replyBox = reg.g_reply.value || '';
+  console.log((replyBox.indexOf('果蝇') < 0 ? '✓' : '✗') +
+              ' 强制回复提示词不含写死的物种（人设可变）: ' + JSON.stringify(replyBox.slice(0, 16)));
 
   const nslot = reg.slots.childElementCount;
   console.log((nslot === 5 ? '✓' : '✗') + ' 模板槽 = ' + nslot + '（期望 5）');
@@ -174,7 +199,7 @@ if (!rc) {
 
   state.prompts.system = 'CHANGED-BY-POLL';
   sandbox.push(state);
-  const stillSame = reg.p_system.value === psys;
+  const stillSame = reg.g_system.value === psys;
   console.log((stillSame ? '✓' : '✗') + ' 二次 push 未覆盖输入框（防轮询抹掉正在输入的内容）');
   if (!stillSame) rc = 1;
 }

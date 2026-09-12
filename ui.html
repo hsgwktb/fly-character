@@ -239,19 +239,21 @@
     <button id="b_gwclose" title="关闭">✕</button></div>
   <div class="gwb">
     <label>系统提示词 — 决定「它是谁」（保存后立即生效）</label>
-    <textarea id="p_system" spellcheck="false"></textarea>
+    <textarea id="g_system" spellcheck="false"></textarea>
     <label>通道提示词 — /api/probe 直连测试用的那一句</label>
-    <textarea id="p_channel" class="short" spellcheck="false"></textarea>
+    <textarea id="g_channel" class="short" spellcheck="false"></textarea>
+    <label>对话者身份 — 告诉它「谁在跟它说话」</label>
+    <textarea id="g_who" class="short" spellcheck="false"></textarea>
     <label>强制回复提示词 — 会紧接着对方那句话之后发给它</label>
-    <textarea id="p_reply" class="short" spellcheck="false"></textarea>
+    <textarea id="g_reply" class="short" spellcheck="false"></textarea>
     <div class="gwrow">
       <button id="b_psave" class="pri">保存并生效</button>
       <button id="b_preset">恢复默认</button>
-      <span id="p_saved" class="note"></span>
+      <span id="g_saved" class="note"></span>
     </div>
     <div class="gwsep">模板存档（5 个空位）</div>
     <div id="slots"></div>
-    <div class="gwhint" id="p_file"></div>
+    <div class="gwhint" id="g_file"></div>
   </div>
 </div>
 
@@ -562,9 +564,14 @@ function syncParams(p){
 }
 /* ---------------- 齿轮：提示词设置 ---------------- */
 const gw = document.getElementById('gearwin');
-const GTA = {system: document.getElementById('p_system'),
-             channel: document.getElementById('p_channel'),
-             reply: document.getElementById('p_reply')};
+// id 前缀必须是 g_ 而不是 p_: p_<key> 是参数滑块的动态 id,
+// 之前提示词字段用 p_reply, 与"强制回复开关"滑块撞了同一个 id ——
+// getElementById 返回 DOM 里靠前的那个(滑块), 于是保存时把滑块的值(1)
+// 当成提示词存了进去(线上提示词就是这样被写坏成 "1" 的)。
+const GTA = {system: document.getElementById('g_system'),
+             channel: document.getElementById('g_channel'),
+             who: document.getElementById('g_who'),
+             reply: document.getElementById('g_reply')};
 let slotsCache = [null, null, null, null, null];
 let promptsSynced = false;
 
@@ -577,7 +584,7 @@ function ctlPost(body, done){
 }
 
 function flash(msg, warn){
-  const el = document.getElementById('p_saved');
+  const el = document.getElementById('g_saved');
   el.textContent = msg;
   el.style.color = warn ? 'var(--warn)' : 'var(--ok)';
   clearTimeout(flash._t);
@@ -674,7 +681,7 @@ function syncPromptsOnce(s){
   if (promptsSynced || !s) return;
   if (s.prompts) for (const k in GTA) GTA[k].value = s.prompts[k];
   if (s.templates) { slotsCache = s.templates; renderSlots(); }
-  if (s.prompts_file) document.getElementById('p_file').textContent = '存档位置：' + s.prompts_file;
+  if (s.prompts_file) document.getElementById('g_file').textContent = '存档位置：' + s.prompts_file;
   promptsSynced = true;
 }
 

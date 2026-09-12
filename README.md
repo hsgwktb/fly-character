@@ -230,3 +230,50 @@ MaleCNS 里确实有求偶细胞：**`pC1` 156 个**（即文献里的 P1 求偶
 
 **这条通用教训**：判断两个变量是否"相对但不同"，不能只看水平值，要看**导数层面的耦合**；
 也不能只看相关系数，要先确认两个变量都真的在自己量程内活动（否则相关是在比较两个常数）。
+
+---
+
+## WebUI：完整控制台（`ui.html`，独立文件，无 base64）
+
+界面是**独立文件 `ui.html`**，后端每次 `GET /` 都从同目录磁盘读取它。
+所以**改界面不需要重启服务**，也不需要把 HTML 塞进 Python（不 base64）。
+
+### 布局
+
+| 区域 | 内容 |
+|---|---|
+| 顶栏 | t / 运行时长 / fps / 连接组驱动占比 / 兴趣 / 性欲 / 求偶 CI / 认知层状态 / 思考开关；暂停·重置·导出痕迹 |
+| 左栏 | 参数，按五组折叠：脑 / 感觉 / 说话门控 / 认知层；每个滑块带一行说明 |
+| 中栏 | 内驱力（11 条**条形** + 曲线）、想说话冲动 u vs 阈值 θ、连接组读出（条形 Hz + 曲线）、兴趣 vs 无聊、求偶/社交 |
+| 右栏 | **对话气泡**（左=果蝇，右=你）、思维流 + 认知面板（评估/想做/消费丢弃/错误）、行为分布、事件流 |
+
+滑块由 JS 按 `SPEC` 规格生成（不是手写 17 个 HTML 控件），所以加参数只需改一处。
+
+### 推荐更新流程（GitHub → Colab）
+
+```bash
+# 本地：构建并推送（含断言，防止把 base64 占位符推上去）
+GH_TOKEN=... python build_repo.py --push "说明"
+
+# Colab：只更新前端（不需要重启）
+python - <<'PY'
+import base64, json, urllib.request
+req = urllib.request.Request(
+    "https://api.github.com/repos/hsgwktb/fly-character/contents/ui.html",
+    headers={"Accept":"application/vnd.github+json","User-Agent":"fly"})
+d = json.loads(urllib.request.urlopen(req, timeout=30).read().decode())
+open("/content/fly-code/ui.html","wb").write(base64.b64decode(d["content"]))
+PY
+```
+
+**两个踩坑：**
+1. **`raw.githubusercontent.com` 有 CDN 缓存**，推送后立刻拉会拿到旧文件（`?cb=` 参数会被忽略）。
+   拉前端请走 **GitHub API contents**（上面这段），或用 `git fetch --depth 1 && git reset --hard FETCH_HEAD`。
+2. **在 Colab 上直接用 curl 覆盖过文件后，`git pull` 会因工作区有本地改动而拒绝更新**，
+   表现为"pull 成功但内容没变"。用 `reset --hard` 或 API 路子。
+
+### 前端两个"不报错"的坑（只能靠肉眼实测发现）
+
+- **`<span>` 是 inline，`width`/`height` 会被忽略** → 条形填充静默不显示。必须 `display:block`。
+- **流式/轮询渲染不能重建 DOM**：思维面板用 `appendChild` 追加、事件流用 `prepend`，
+  并在追加前记录"是否本来就在底部"实现粘性滚动，否则滚动位置每帧被重置。

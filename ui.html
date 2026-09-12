@@ -53,6 +53,7 @@
   <span class="stat">性欲 <b id="s_sex">0.00</b></span>
   <span class="stat">兴趣 <b id="s_int">0.00</b></span>
   <span class="stat">求偶指数 CI <b id="s_ci">0.00</b></span>
+  <span class="stat">认知层 <b id="s_llm">—</b></span>
   <span class="stat badge" id="s_mode">—</span>
   <button id="b_run">暂停</button>
   <button id="b_reset">重置</button>
@@ -95,6 +96,15 @@
       <input type="range" id="p_ada" min="0" max="1" step="1"></div>
     <div style="color:var(--dim);font-size:11px;margin-top:10px">
       「自适应阈值=0」用于复现固定阈值的病态（发声率失控、间隔像节拍器）。
+    </div>
+    <h2 style="margin-top:16px">认知层</h2>
+    <div class="ctl"><label>消费 LLM 输出（0=消融：只显示不改变行为）<b id="v_use"></b></label>
+      <input type="range" id="p_use" min="0" max="1" step="1"></div>
+    <div class="ctl"><label>发声时允许思考（更丰富但更慢）<b id="v_think"></b></label>
+      <input type="range" id="p_think" min="0" max="1" step="1"></div>
+    <div style="color:var(--dim);font-size:11px;margin-top:6px">
+      「消费=0」时 LLM 照常调用、台词照常说，但它的情境评估与行动意图被丢弃 ——
+      用来验证"思维真的改变了行为"还是只是装饰。
     </div>
   </div>
 
@@ -154,6 +164,21 @@
   </div>
 
   <div class="panel">
+    <h2>对它说话</h2>
+    <div style="display:flex;gap:6px">
+      <input id="say" placeholder="说点什么…" style="flex:1;background:#12151b;border:1px solid var(--line);
+             color:var(--fg);border-radius:6px;padding:6px 8px;font-size:12px">
+      <button id="b_say">发送</button>
+    </div>
+    <div style="color:var(--dim);font-size:11px;margin:6px 0 12px">
+      你的话会变成<strong>刺激</strong>（抬高社交显著性、兴趣、发声倾向），
+      但<strong>不保证它回应</strong>——说不说仍由它自己的冲动阈值决定。
+    </div>
+    <h2>思维（模型内部活动）</h2>
+    <div id="cogline" class="stat" style="font-size:11px;margin-bottom:4px">—</div>
+    <div id="think" style="height:150px;overflow-y:auto;font-size:12px;background:#12151b;
+         border:1px solid var(--line);border-radius:6px;padding:8px;margin-bottom:12px;
+         overscroll-behavior:contain"></div>
     <h2>行为与发声</h2>
     <div id="log"></div>
   </div>
@@ -237,17 +262,39 @@ function push(state){
   m.className = 'stat badge ' + (state.llm==='openai'?'g':'f');
 
   const log = document.getElementById('log');
+  const th = document.getElementById('think');
+  const atBottom = th.scrollHeight - th.scrollTop - th.clientHeight < 40;
   for (const e of state.events){
+    if (e.kind === 'tht'){
+      // 思维追加式渲染：不重建 DOM，否则滚动位置会被重置
+      const d = document.createElement('div');
+      d.className = 'row';
+      d.innerHTML = '<span class="t">'+e.t.toFixed(0)+'s</span><span class="v">'+e.text+'</span>';
+      th.appendChild(d);
+      while (th.childElementCount > 120) th.removeChild(th.firstChild);
+      continue;
+    }
     const div = document.createElement('div');
-    div.className = 'row ' + (e.kind==='spk'?'spk':(e.kind==='fb'?'fb':'act'));
+    div.className = 'row ' + (e.kind==='spk'?'spk':(e.kind==='fb'?'fb':(e.kind==='hear'?'act':'act')));
     div.innerHTML = '<span class="t">'+e.t.toFixed(0)+'s</span><span class="v">'+e.text+'</span>';
     log.prepend(div);
   }
+  if (atBottom) th.scrollTop = th.scrollHeight;   // 粘性滚动
   lastSeq = state.seq;
+
+  const ll = state.llm || {};
+  document.getElementById('s_llm').textContent =
+    (ll.busy ? '生成中' : '空闲') + ' · ' + (ll.last_ms||0) + 'ms · ' + (ll.think_mode||'-');
+  const cg = document.getElementById('cogline');
+  cg.textContent = '评估 novelty=' + state.appr.novelty + ' threat=' + state.appr.threat +
+    ' control=' + state.appr.control + ' | 想做=' + state.want +
+    ' | 消费 ' + state.llm_consumed + ' / 丢弃 ' + state.llm_discarded +
+    (state.llm_pending ? ' | 待生成 ' + state.llm_pending : '') +
+    (ll.err ? ' | err ' + String(ll.err).slice(0,40) : '');
   while (log.childElementCount > 220) log.removeChild(log.lastChild);
 }
 
-const P = ['gain','steps','hab','lo','hi','mh','mt','mb','mi','ml','mc','soc','sr','kp','ada'];
+const P = ['gain','steps','hab','lo','hi','mh','mt','mb','mi','ml','mc','soc','sr','kp','ada','use','think'];
 function bind(){
   for (const k of P){
     const el = document.getElementById('p_'+k);
@@ -261,7 +308,7 @@ function bind(){
 function applyParams(p){
   const map = {gain:'p_gain',steps:'p_steps',hab:'p_hab',lo:'p_lo',hi:'p_hi',
                mh:'p_mh',mt:'p_mt',mb:'p_mb',mi:'p_mi',ml:'p_ml',mc:'p_mc',soc:'p_soc',
-               sr:'p_sr',kp:'p_kp',ada:'p_ada'};
+               sr:'p_sr',kp:'p_kp',ada:'p_ada',use:'p_use',think:'p_think'};
   for (const k in map){
     const el = document.getElementById(map[k]);
     if (document.activeElement !== el) el.value = p[k];
@@ -279,6 +326,17 @@ document.getElementById('b_reset').onclick = () => {
   hist = []; lastSeq = 0; document.getElementById('log').innerHTML='';
   fetch('/api/reset', {method:'POST'});
 };
+document.getElementById('b_say').onclick = () => {
+  const el = document.getElementById('say');
+  const t = el.value.trim();
+  if (!t) return;
+  el.value = '';
+  fetch('/api/say', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({text: t})});
+};
+document.getElementById('say').addEventListener('keydown', ev => {
+  if (ev.key === 'Enter') document.getElementById('b_say').click();
+});
 bind();
 async function loop(){
   try{

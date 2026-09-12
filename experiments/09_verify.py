@@ -1,0 +1,21 @@
+import numpy as np, pandas as pd, pyarrow.feather as feather, os, hashlib
+OUT = "/content/fly/normalized"
+indptr = np.load(OUT + "/indptr.npy"); indices = np.load(OUT + "/indices.npy")
+w = np.load(OUT + "/weights.npy"); sign = np.load(OUT + "/sign.npy")
+ids = np.load(OUT + "/neuron_ids.npy"); meta = feather.read_table(OUT + "/neurons.feather").to_pandas()
+N = len(ids)
+print("N =", N, "| meta rows =", len(meta), "| ids unique =", len(np.unique(ids)) == N)
+print("indptr:", indptr.shape, "| indptr[-1] =", indptr[-1], "| edges =", len(indices))
+print("一致性:", bool(indptr[-1] == len(indices)) and bool((np.diff(indptr) >= 0).all()))
+print("synapses =", int(w.sum()), "| weight min/max/mean = %.1f/%.1f/%.2f" % (w.min(), w.max(), w.mean()))
+print("sign 分布 (+1/-1/0):", (sign > 0).sum(), (sign < 0).sum(), (sign == 0).sum())
+deg = np.diff(indptr)
+print("出度: mean %.1f  max %d  zero-out %d" % (deg.mean(), deg.max(), int((deg == 0).sum())))
+post = np.repeat(np.arange(N, dtype=np.int32), deg)
+print("自环 =", int((indices == post).sum()))
+print("\nsuperclass top10:\n", meta.superclass.value_counts().head(10).to_string())
+print("\n关键类型在索引里的数量:")
+t = meta.type.astype(str)
+for k in ["DNp01", "DNp20", "DNp09", "MN9", "LC4", "LPLC2", "PPL1", "PAM", "MBON"]:
+    print("   %-7s %4d" % (k, int(t.str.contains(k, regex=False).sum())))
+print("\n磁盘占用 MB:", round(sum(os.path.getsize(OUT + "/" + f) for f in os.listdir(OUT)) / 1e6, 1))

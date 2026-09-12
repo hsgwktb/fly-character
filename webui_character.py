@@ -7,7 +7,7 @@ webui_character.py — 果蝇数字角色的 WebUI 观测台后端
 - HTTP: /  (观测台页面)  /api/state  /api/control  /api/reset
 - 端口 8000 (避开 Colab 自带的 8080), 交给 cloudflared 暴露
 """
-import base64, json, math, os, threading, time
+import json, math, os, threading, time
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -15,9 +15,12 @@ import numpy as np
 import pandas as pd
 import torch
 
-OUT = "/content/fly/normalized"
-UI_B64 = "__UI_B64__"
+from fly_llm import FlyLLM
+
+OUT = os.environ.get("FLY_DATA", "/content/fly/normalized")
+UI_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui.html")
 PORT = int(os.environ.get("FLY_UI_PORT", "8000"))
+LLM = FlyLLM()          # 认知层；不可用时自动降级为模板发声
 
 # ------------------------------------------------------------------ 连接组
 meta = pd.read_feather(OUT + "/neurons.feather")
@@ -139,11 +142,28 @@ class Char:
         self.social = 0.0             # 社交显著性(视野内有无同类)
         self.interest = 0.0           # 兴趣: 指向客体的相位性注意状态(不是"1-无聊")
         self.interest_boost = 0.0     # 显著事件对兴趣的瞬时抬升
+        # ---- 认知层 ----
+        self.external = deque(maxlen=20)      # 外部消息(当作刺激, 不是提示词)
+        self.vocal_bump = 0.0                 # 外部消息带来的发声倾向(衰减)
+        self.social_boost = 0.0               # "有人在场"的衰减量
+        self.thoughts = deque(maxlen=24)      # 思维日志
+        self.says = deque(maxlen=24)          # 台词日志
+        self.memory = deque(maxlen=16)        # 供下次请求的短期记忆
+        self.appr = {"novelty": 0.5, "threat": 0.5, "control": 0.5}
+        self.appr_until = 0.0
+        self.want = "none"
+        self.want_until = 0.0
+        self.llm_pending = 0
+        self.llm_consumed = 0
+        self.llm_discarded = 0
         self.n_act = 0; self.n_grounded = 0; self.fps = 0.0
         self.rng = np.random.default_rng(7)
         self.params = dict(gain=0.65, steps=15, hab=0.7, lo=0.10, hi=0.40,
                            mh=1.0, mt=1.0, mb=1.0, ml=1.0, mc=1.0, soc=0.0,
-                           mi=1.0, sr=0.05, kp=2.0, ada=1.0, run=1.0)
+                           mi=1.0, sr=0.05, kp=2.0, ada=1.0,
+                           use=1.0,      # 消融: 0 = LLM 输出只显示、不消费
+                           think=0.0,    # 发声时是否允许模型思考(慢但更丰富)
+                           run=1.0)
 
     def drives(self):
         b, wd, t = self.body, self.world, self.t
@@ -178,6 +198,82 @@ class Char:
             self.court_log.popleft()
         return min(1.0, sum(d for t0, d in self.court_log if t0 >= now - win) / win)
 
+    # ---------------- 认知层 ----------------
+    def build_packet(self, intent: str) -> dict:
+        """喂给认知层的状态包。
+
+        关键：给的是**全部数值与近况**，不是一个标签。
+        旧实现是 `argmax(drives)` 得到一个词再查模板 —— 那样 LLM 无事可做。
+        """
+        d = self.drives()
+        return {
+            "t": round(self.t, 1),
+            "drives": {k: round(v, 2) for k, v in d.items()},
+            "strongest_drive": intent,
+            "affect": {"valence": round(self.aff["valence"], 2),
+                       "arousal": round(self.aff["arousal"], 2)},
+            "interest": round(self.interest, 2),
+            "courtship_index": round(self.ci, 2),
+            "world": {"food": round(self.world["food"], 2),
+                      "water": round(self.world["water"], 2),
+                      "temp": round(self.world["temp"], 1),
+                      "humidity": round(self.world["humidity"], 2),
+                      "novelty": round(self.world["novelty"], 2),
+                      "flies_near": self.world["flies_near"],
+                      "threat": round(self.world["threat"], 2)},
+            "connectome_readout_hz": {k: round(v, 1) for k, v in self.ro.items()},
+            "recent_actions": [e["text"].split("<")[0].strip()
+                               for e in self.events if e["kind"] in ("act", "fb")][-6:],
+            "recent_thoughts": [x["thought"] for x in list(self.thoughts)[-3:]],
+            "recent_says": [x["say"] for x in list(self.says)[-3:]],
+            "heard_from_outside": [m["text"] for m in list(self.external)[-3:]],
+        }
+
+    def hear(self, text: str) -> None:
+        """外部消息 = 刺激，不是提示词。
+
+        它只抬高兴趣/唤醒/社交显著性/发声倾向 —— **说不说仍由阈值决定**。
+        这样"由果蝇大脑主动驱动"没有被破坏：人可以引诱它开口，但不能命令它开口。
+        """
+        text = (text or "").strip()[:200]
+        if not text:
+            return
+        self.external.append({"t": round(self.t, 1), "text": text})
+        self.ev("hear", "📣 听到: %s" % text[:80])
+        self.interest_boost = min(1.4, self.interest_boost + 0.9)
+        self.aff["arousal"] = min(1.0, self.aff["arousal"] + 0.25)
+        self.social_boost = 1.0
+        self.vocal_bump = min(1.2, self.vocal_bump + 0.9)
+
+    def apply_llm(self, r: dict, use_effect: float) -> None:
+        if not r.get("ok"):
+            self.ev("think", "(认知层失败: %s) <span class='badge f'>错误</span>"
+                    % (r.get("err") or "")[:70])
+            return
+        thought = (r.get("thought") or "").strip()
+        say = (r.get("say") or "").strip()
+        if thought:
+            self.thoughts.append({"t": round(self.t, 1), "thought": thought,
+                                  "ms": r.get("ms", 0)})
+            self.ev("tht", thought)      # 走事件流, 前端按 kind 路由到思维面板
+        if say:
+            self.says.append({"t": round(self.t, 1), "say": say})
+            self.ev("spk", "「%s」 <span class='stat'>%dms%s</span>" % (
+                say, r.get("ms", 0), " ·带思考" if r.get("reasoning_len") else ""))
+        if use_effect > 0.5:
+            for k in ("novelty", "threat", "control"):
+                v = r.get(k)
+                if v is not None:
+                    self.appr[k] = float(v)
+            self.appr_until = self.t + 25.0
+            if r.get("want") and r["want"] != "none":
+                self.want = r["want"]
+                self.want_until = self.t + 20.0
+            self.llm_consumed += 1
+        else:
+            self.llm_discarded += 1        # 消融: 只显示、不消费
+        self.rum = min(1.0, self.rum + 0.6)   # 想法回流
+
     def step(self, dt):
         P = self.params; b, wd, a = self.body, self.world, self.aff
         self.tick += 1
@@ -207,6 +303,9 @@ class Char:
         # 兴趣由"环境里有多少可看的"加上显著事件的瞬时抬升驱动;
         # 无聊则是慢积累的亏缺 —— 没兴趣时涨得快, 有兴趣时被缓解。
         base_i = 0.06 + 0.30 * float(np.clip(wd["novelty"], 0, 1))
+        if self.t < self.appr_until and P["use"] > 0.5:
+            # 消费 LLM 的情境评估: 它说"这地方很新鲜"就真的抬高兴趣基线
+            base_i = 0.5 * base_i + 0.5 * (0.06 + 0.30 * self.appr.get("novelty", 0.5))
         self.interest += dt / 4.0 * (min(1.0, base_i + self.interest_boost) - self.interest)
         self.interest = float(np.clip(self.interest, 0.0, 1.0))
         self.interest_boost *= math.exp(-dt / 6.0)
@@ -216,6 +315,8 @@ class Char:
         b["activity"] *= math.exp(-dt / 3.0)
         for k in self.hab:
             self.hab[k] *= math.exp(-dt / 20.0)
+        self.vocal_bump *= math.exp(-dt / 20.0)      # 外部消息带来的发声倾向衰减
+        self.social_boost *= math.exp(-dt / 15.0)    # "有人在场"衰减
         for k in self.cooldown:
             if self.cooldown[k] > 0:
                 self.cooldown[k] = max(0.0, self.cooldown[k] - dt)
@@ -225,7 +326,7 @@ class Char:
         sugar = float(np.clip(wd["food"], 0, 1)) * (P["lo"] + P["hi"] * min(1.0, P["mh"] * d["hunger"]))
         loom = (P["lo"] + P["hi"] * min(1.0, P["mt"] * d["threat"])) if d["threat"] > 0.02 else 0.0
         social = 1.0 if wd["flies_near"] > 0 else 0.0
-        social = max(social, float(P["soc"]))      # 人工社交显著性(把一只同类放进视野)
+        social = max(social, float(P["soc"]), self.social_boost)
         self.social = social
         walk_vis = P["lo"] + P["hi"] * min(1.0, P["mb"] * d["boredom"])
         turn_vis = social * (P["lo"] + P["hi"] * min(1.0, P["ml"] * d["lonely"]))
@@ -251,6 +352,8 @@ class Char:
                 term = 0.0; src = "fallback"
             u = drv + term
             sc = u * PRIO[name] * (1.0 + 1.5 * stress)
+            if (name == self.want and self.t < self.want_until and P["use"] > 0.5):
+                sc *= 1.6      # LLM 的"想做某事" = 软先验, 不是硬命令
             if sc > thr and sc > bs:
                 best, bs, bsrc = name, sc, src
         if best:
@@ -296,9 +399,16 @@ class Char:
             a["valence"] = float(np.clip(a["valence"] + 1.8 * relief, -1, 1))
 
         a["arousal"] += dt / 6.0 * ((0.18 + 0.55 * stress + 0.30 * abs(a["valence"])
-                                     + 0.15 * self.interest) - a["arousal"])
+                                     + 0.15 * self.interest
+                                     + (0.20 * self.appr.get("threat", 0.5)
+                                        if (self.t < self.appr_until and P["use"] > 0.5) else 0.0)
+                                     ) - a["arousal"])
         a["arousal"] = float(np.clip(a["arousal"], 0, 1))
         a["valence"] *= math.exp(-dt / 30.0)
+        if self.t < self.appr_until and P["use"] > 0.5:
+            # 消费"控制感": 觉得自己应付不来 -> 效价被持续下压
+            a["valence"] = float(np.clip(
+                a["valence"] + dt * 0.35 * (self.appr.get("control", 0.5) - 0.5), -1, 1))
         self.rum *= math.exp(-dt / 8.0)
 
         # ---- 想说话阈值门控 ----
@@ -310,6 +420,7 @@ class Char:
                  + 0.90 * w_lonely * d["lonely"] + 0.60 * d["sexual"]
                  + 0.90 * max(d[k] for k in BASE) + 0.80 * w_bored * d["boredom"]
                  + 0.35 * self.interest
+                 + 0.60 * self.vocal_bump
                  + 0.50 * self.rum)
         self.u_speak += dt / 2.0 * (-self.u_speak + vocal)
         self.u_speak += 0.28 * math.sqrt(dt) * float(self.rng.standard_normal())
@@ -329,13 +440,24 @@ class Char:
         if self.refr <= 0 and self.u_speak > self.theta:
             strongest = max(d, key=lambda k: d[k])
             key = strongest if d[strongest] > 0.15 else "calm"
-            txt = str(self.rng.choice(TEMPL.get(key, TEMPL["calm"])))
-            self.ev("spk", "「%s」  <span class='stat'>意图=%s</span>" % (txt, key))
+            if os.environ.get("FLY_USE_LLM", "1") == "1":
+                # 触发条件仍然是"想说话的冲动越过阈值" —— LLM 只被内生动力唤起
+                self.llm_pending += 1
+                LLM.request(self.build_packet(key), tag="speak",
+                            allow_think=bool(P.get("think", 0.0) > 0.5))
+                self.ev("think", "… <span class='stat'>认知层生成中 (最强内驱力=%s)</span>" % key)
+                self.refr = 25.0      # 不应期必须覆盖生成延迟, 否则请求会堆积
+            else:
+                txt = str(self.rng.choice(TEMPL.get(key, TEMPL["calm"])))
+                self.ev("spk", "「%s」 <span class='badge f'>模板</span>" % txt)
+                self.refr = 5.0
             self.speak_times.append(self.t)
-            self.refr = 5.0
             self.theta += 0.15
             self.u_speak = 0.0
-            self.rum = min(1.0, self.rum + 0.5)
+        r = LLM.poll()
+        if r is not None:
+            self.llm_pending = max(0, self.llm_pending - 1)
+            self.apply_llm(r, float(P["use"]))
         self.ci = self.courtship_index()
         self.t += dt
 
@@ -353,7 +475,16 @@ def snapshot(since):
             "interest": round(c.interest, 3),
             "ro": {k: round(v, 2) for k, v in c.ro.items()},
             "n_act": c.n_act, "n_grounded": c.n_grounded,
-            "llm": os.environ.get("FLY_LLM", "mock"),
+            "llm": LLM.stats(),
+            "thoughts": list(c.thoughts)[-6:],
+            "says": list(c.says)[-6:],
+            "heard": list(c.external)[-4:],
+            "appr": {k: round(v, 2) for k, v in c.appr.items()},
+            "appr_active": c.t < c.appr_until,
+            "want": c.want if c.t < c.want_until else "none",
+            "llm_pending": c.llm_pending,
+            "llm_consumed": c.llm_consumed,
+            "llm_discarded": c.llm_discarded,
             "params": dict(c.params),
             "seq": c.seq,
             "events": [e for e in c.events if e["seq"] > since][-40:],
@@ -379,7 +510,8 @@ class H(BaseHTTPRequestHandler):
                 except Exception: since = 0
             self._send(200, json.dumps(snapshot(since)).encode("utf-8"))
         elif self.path in ("/", "/index.html"):
-            self._send(200, base64.b64decode(UI_B64), "text/html; charset=utf-8")
+            with open(UI_PATH, "rb") as fh:
+                self._send(200, fh.read(), "text/html; charset=utf-8")
         else:
             self._send(404, b"{}")
 
@@ -402,6 +534,11 @@ class H(BaseHTTPRequestHandler):
         elif self.path == "/api/reset":
             with LOCK:
                 CH.__init__()
+            self._send(200, b'{"ok":true}')
+        elif self.path == "/api/say":
+            # 外部消息进入身体当刺激, 不直接触发 LLM
+            with LOCK:
+                CH.hear(str(data.get("text", "")))
             self._send(200, b'{"ok":true}')
         else:
             self._send(404, b"{}")

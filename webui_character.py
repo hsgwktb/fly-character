@@ -184,6 +184,7 @@ class Char:
         self.urges = {b: 0.0 for b in BEH}
         self.ro = {b: 0.0 for b in GROUND}
         self.u_speak = 0.0; self.theta = 1.0; self.refr = 0.0; self.rum = 0.0
+        self.reply_refr = 0.0         # 强制回复的独立不应期(短)
         self.speak_times = deque(); self.events = []; self.seq = 0
         self.court_log = deque()      # (起始时刻, 持续时长) -> 用于算求偶指数
         self.ci = 0.0                 # 求偶指数: 近 60s 处于求偶行为的时间占比
@@ -289,7 +290,8 @@ class Char:
         if not text:
             return
         self.external.append({"t": round(self.t, 1), "text": text,
-                              "answered": False, "taken": False, "tries": 0})
+                              "answered": False, "taken": False, "tries": 0,
+                              "taken_at": -999.0})
         self.ev("hear", "📣 听到: %s" % text[:80])
         self.interest_boost = min(1.4, self.interest_boost + 0.9)
         self.aff["arousal"] = min(1.0, self.aff["arousal"] + 0.25)
@@ -384,6 +386,8 @@ class Char:
             self.hab[k] *= math.exp(-dt / 20.0)
         self.vocal_bump *= math.exp(-dt / 20.0)      # 外部消息带来的发声倾向衰减
         self.social_boost *= math.exp(-dt / 15.0)    # "有人在场"衰减
+        if self.reply_refr > 0:
+            self.reply_refr = max(0.0, self.reply_refr - dt)
         for k in self.cooldown:
             if self.cooldown[k] > 0:
                 self.cooldown[k] = max(0.0, self.cooldown[k] - dt)
@@ -505,7 +509,24 @@ class Char:
             self.theta = 1.0
         if self.refr > 0:
             self.refr = max(0.0, self.refr - dt)
-        if self.refr <= 0 and self.u_speak > self.theta:
+        # ---- 强制回复模式：有新消息就绕过冲动阈值直接回 ----
+        # 默认(主动模式)下消息只是刺激、不保证被回应; 打开这个开关后改成必须回。
+        # 关键: 必须**先判断有没有待回复的消息**，并让自发发言给它让位 ——
+        # 否则自发发言的 25s 不应期会把到消息的窗口全占掉，回复永远轮不上(实测踩到过)。
+        pending = None
+        if P.get("reply", 0.0) > 0.5:
+            for m in self.external:
+                if m["answered"]:
+                    continue
+                # taken 超过 60s 视为请求被队列丢弃(队列深度 1, latest-wins)，交回重试
+                if m["taken"] and (self.t - m.get("taken_at", -999.0)) < 60.0:
+                    continue
+                if m["tries"] >= 3:
+                    continue
+                pending = m
+                break
+
+        if pending is None and self.refr <= 0 and self.u_speak > self.theta:
             strongest = max(d, key=lambda k: d[k])
             key = strongest if d[strongest] > 0.15 else "calm"
             if os.environ.get("FLY_USE_LLM", "1") == "1":
@@ -523,22 +544,18 @@ class Char:
             self.theta += 0.15
             self.u_speak = 0.0
 
-        # ---- 强制回复模式：有新消息就绕过冲动阈值直接回 ----
-        # 默认(主动模式)下消息只是刺激、不保证被回应; 打开这个开关后改成必须回。
-        if P.get("reply", 0.0) > 0.5 and self.refr <= 0:
-            msg = next((m for m in self.external
-                        if not m["answered"] and not m["taken"] and m["tries"] < 3), None)
-            if msg is not None:
-                msg["taken"] = True
-                msg["tries"] += 1
-                self.llm_pending += 1
-                pkt = self.build_packet("reply")
-                pkt["reply_to"] = msg["text"]
-                LLM.request(pkt, tag="reply",
-                            allow_think=bool(P.get("think", 0.0) > 0.5),
-                            meta={"msg_t": msg["t"], "msg_text": msg["text"]})
-                self.ev("think", "… <span class='stat'>强制回复（绕过阈值）</span>")
-                self.refr = 12.0
+        if pending is not None and self.reply_refr <= 0:
+            pending["taken"] = True
+            pending["taken_at"] = self.t
+            pending["tries"] += 1
+            self.llm_pending += 1
+            pkt = self.build_packet("reply")
+            pkt["reply_to"] = pending["text"]
+            LLM.request(pkt, tag="reply",
+                        allow_think=bool(P.get("think", 0.0) > 0.5),
+                        meta={"msg_t": pending["t"], "msg_text": pending["text"]})
+            self.ev("think", "… <span class='stat'>强制回复：「%s」</span>" % pending["text"][:30])
+            self.reply_refr = 8.0
 
         r = LLM.poll()
         if r is not None:
@@ -631,9 +648,16 @@ class H(BaseHTTPRequestHandler):
                 CH.params.update(keep)
             self._send(200, b'{"ok":true}')
         elif self.path == "/api/say":
-            # 外部消息进入身体当刺激, 不直接触发 LLM
+            txt = str(data.get("text", "")).strip()
+            if not txt:
+                # 不能静默返回 ok:true —— 用 curl -d 传中文时字节会被破坏、JSON 解析失败，
+                # 表现就是"消息发出去了但它没收到"。必须让客户端看得见。
+                self._send(400, json.dumps(
+                    {"ok": False, "err": "empty_or_unparsable_body",
+                     "hint": "中文请用 --data-binary @file.json 传"}, ensure_ascii=False).encode("utf-8"))
+                return
             with LOCK:
-                CH.hear(str(data.get("text", "")))
+                CH.hear(txt)
             self._send(200, b'{"ok":true}')
         elif self.path == "/api/probe":
             r = probe(str(data.get("prompt", "你现在很饿，说一句。")),

@@ -461,7 +461,8 @@ function push(s){
     '<span>想做</span><b>' + s.want + '</b>' +
     '<span>消费 / 丢弃</span><b>' + s.llm_consumed + ' / ' + s.llm_discarded + '</b>' +
     '<span>待生成</span><b>' + s.llm_pending + '</b>' +
-    '<span>发给模型的历史</span><b>' + ((s.hist || []).length) + ' 条 / 整包 ' +
+    '<span>发给模型的历史</span><b>' + ((s.hist || []).length) + ' 条（上限 ' +
+      (s.params ? s.params.hist_n : '—') + '，改后下次调用生效）/ 整包 ' +
       (s.payload_bytes ? (s.payload_bytes / 1024).toFixed(1) + ' KB' : '—') + '</b>' +
     '<span>模型</span><b>' + (ll.model || 'qwen3.8-27b-uncensored') + '</b>' +
     (ll.err ? '<span>错误</span><b style="color:#ff6b6b">' + String(ll.err).slice(0,70) + '</b>' : '');

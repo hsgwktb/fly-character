@@ -51,6 +51,7 @@
   <span class="stat">fps=<b id="s_fps">0</b></span>
   <span class="stat">连接组驱动 <b id="s_share">0</b>%</span>
   <span class="stat">性欲 <b id="s_sex">0.00</b></span>
+  <span class="stat">兴趣 <b id="s_int">0.00</b></span>
   <span class="stat">求偶指数 CI <b id="s_ci">0.00</b></span>
   <span class="stat badge" id="s_mode">—</span>
   <button id="b_run">暂停</button>
@@ -77,6 +78,8 @@
       <input type="range" id="p_mt" min="0" max="2" step="0.05"></div>
     <div class="ctl"><label>无聊→新颖度增益 <b id="v_mb"></b></label>
       <input type="range" id="p_mb" min="0" max="2" step="0.05"></div>
+    <div class="ctl"><label>兴趣→无聊抑制强度 <b id="v_mi"></b></label>
+      <input type="range" id="p_mi" min="0" max="2" step="0.05"></div>
     <div class="ctl"><label>孤独→社交增益 <b id="v_ml"></b></label>
       <input type="range" id="p_ml" min="0" max="2" step="0.05"></div>
     <div class="ctl"><label>性欲→求偶倍率 <b id="v_mc"></b></label>
@@ -136,6 +139,18 @@
         把"人工社交显著性"拉起来就能看到性欲如何转成实际求偶。
       </div>
     </div>
+    <h2>兴趣 vs 无聊（相对但不等价）</h2>
+    <div class="chart"><canvas id="c_int"></canvas>
+      <div class="legend">
+        <span><i style="background:#facc15"></i>兴趣（相位性，τ≈4s）</span>
+        <span><i style="background:#42d392"></i>无聊（累积量，τ≈70s）</span>
+        <span><i style="background:#6b7280"></i>1−无聊</span>
+      </div>
+      <div class="legend" style="margin-top:2px">
+        如果兴趣只是无聊的补集，黄线应与灰虚线完全重合。<b>不会</b>——
+        兴趣能被事件瞬间激起、也衰减得快，所以会出现"兴趣已回落而无聊仍在高位"的时段。
+      </div>
+    </div>
   </div>
 
   <div class="panel">
@@ -165,11 +180,14 @@ function draw(canvasId, series, ymax){
   let mx = ymax;
   if (mx == null){ mx = 1e-6; for (const s of series) for (const v of s.data) if (v>mx) mx=v; mx*=1.15; }
   for (const s of series){
-    g.strokeStyle = s.color; g.lineWidth = 1.6; g.beginPath();
+    g.strokeStyle = s.color; g.lineWidth = 1.6;
+    g.setLineDash(s.dash ? [5,4] : []);
+    g.beginPath();
     s.data.forEach((v,i)=>{ const x = w*i/(H-1), y = h-(Math.min(v,mx)/mx)*h;
       i? g.lineTo(x,y) : g.moveTo(x,y); });
     g.stroke();
   }
+  g.setLineDash([]);
 }
 
 function push(state){
@@ -201,7 +219,14 @@ function push(state){
     {color:'#fbbf24', data: hist.map(s=>s.ci)},
   ], 1);
 
+  draw('c_int', [
+    {color:'#6b7280', dash:true, data: hist.map(s=>1-s.d.boredom)},
+    {color:'#42d392', data: hist.map(s=>s.d.boredom)},
+    {color:'#facc15', data: hist.map(s=>s.interest)},
+  ], 1);
+
   document.getElementById('s_sex').textContent = state.d.sexual.toFixed(2);
+  document.getElementById('s_int').textContent = state.interest.toFixed(2);
   document.getElementById('s_ci').textContent = state.ci.toFixed(2);
   document.getElementById('s_t').textContent = state.t.toFixed(0);
   document.getElementById('s_tick').textContent = state.tick;
@@ -222,7 +247,7 @@ function push(state){
   while (log.childElementCount > 220) log.removeChild(log.lastChild);
 }
 
-const P = ['gain','steps','hab','lo','hi','mh','mt','mb','ml','mc','soc','sr','kp','ada'];
+const P = ['gain','steps','hab','lo','hi','mh','mt','mb','mi','ml','mc','soc','sr','kp','ada'];
 function bind(){
   for (const k of P){
     const el = document.getElementById('p_'+k);
@@ -235,7 +260,7 @@ function bind(){
 }
 function applyParams(p){
   const map = {gain:'p_gain',steps:'p_steps',hab:'p_hab',lo:'p_lo',hi:'p_hi',
-               mh:'p_mh',mt:'p_mt',mb:'p_mb',ml:'p_ml',mc:'p_mc',soc:'p_soc',
+               mh:'p_mh',mt:'p_mt',mb:'p_mb',mi:'p_mi',ml:'p_ml',mc:'p_mc',soc:'p_soc',
                sr:'p_sr',kp:'p_kp',ada:'p_ada'};
   for (const k in map){
     const el = document.getElementById(map[k]);

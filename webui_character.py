@@ -137,11 +137,13 @@ class Char:
         self.court_log = deque()      # (起始时刻, 持续时长) -> 用于算求偶指数
         self.ci = 0.0                 # 求偶指数: 近 60s 处于求偶行为的时间占比
         self.social = 0.0             # 社交显著性(视野内有无同类)
+        self.interest = 0.0           # 兴趣: 指向客体的相位性注意状态(不是"1-无聊")
+        self.interest_boost = 0.0     # 显著事件对兴趣的瞬时抬升
         self.n_act = 0; self.n_grounded = 0; self.fps = 0.0
         self.rng = np.random.default_rng(7)
         self.params = dict(gain=0.65, steps=15, hab=0.7, lo=0.10, hi=0.40,
                            mh=1.0, mt=1.0, mb=1.0, ml=1.0, mc=1.0, soc=0.0,
-                           sr=0.05, kp=2.0, ada=1.0, run=1.0)
+                           mi=1.0, sr=0.05, kp=2.0, ada=1.0, run=1.0)
 
     def drives(self):
         b, wd, t = self.body, self.world, self.t
@@ -191,13 +193,26 @@ class Char:
         wd["threat"] = max(0.0, wd["threat"] - dt * 0.05)
         if self.rng.random() < dt * 0.030:
             wd["threat"] = min(1.0, wd["threat"] + 0.5 + 0.4 * float(self.rng.random()))
+            self.interest_boost = min(1.0, self.interest_boost + 0.6)      # 威胁=显著事件
         if self.rng.random() < dt * 0.05:
-            wd["flies_near"] = int(np.clip(wd["flies_near"] + int(self.rng.integers(-1, 2)), 0, 4))
+            nf = int(np.clip(wd["flies_near"] + int(self.rng.integers(-1, 2)), 0, 4))
+            if nf > wd["flies_near"]:
+                self.interest_boost = min(1.0, self.interest_boost + 0.5)  # 同类出现=显著事件
+            wd["flies_near"] = nf
         b["energy"] = max(0.0, b["energy"] - dt * (0.0050 + 0.0030 * b["activity"]))
         b["hydration"] = max(0.0, b["hydration"] - dt * 0.0045)
         b["fatigue"] = min(1.0, b["fatigue"] + dt * 0.0060 * (0.4 + b["activity"]))
         b["temp"] += dt / 20.0 * (wd["temp"] - b["temp"]) + dt * 0.15 * b["activity"]
-        b["boredom"] = min(1.0, b["boredom"] + dt * 0.014 * (1 - 0.6 * a["arousal"]))
+        # ---- 兴趣(相位性, τ≈4s) 与 无聊(累积量, τ≈70s): 相对但不同 ----
+        # 兴趣由"环境里有多少可看的"加上显著事件的瞬时抬升驱动;
+        # 无聊则是慢积累的亏缺 —— 没兴趣时涨得快, 有兴趣时被缓解。
+        base_i = 0.15 + 0.85 * float(np.clip(wd["novelty"], 0, 1))
+        self.interest += dt / 4.0 * (min(1.0, base_i + self.interest_boost) - self.interest)
+        self.interest = float(np.clip(self.interest, 0.0, 1.0))
+        self.interest_boost *= math.exp(-dt / 6.0)
+        b["boredom"] = float(np.clip(
+            b["boredom"] + dt * (0.018 * (1.0 - 0.85 * self.interest) * (1 - 0.5 * a["arousal"])
+                                 - 0.008 * P["mi"] * self.interest), 0.0, 1.0))
         b["activity"] *= math.exp(-dt / 3.0)
         for k in self.hab:
             self.hab[k] *= math.exp(-dt / 20.0)
@@ -214,8 +229,10 @@ class Char:
         self.social = social
         walk_vis = float(np.clip(wd["novelty"], 0, 1)) * (P["lo"] + P["hi"] * min(1.0, P["mb"] * d["boredom"]))
         turn_vis = social * (P["lo"] + P["hi"] * min(1.0, P["ml"] * d["lonely"]))
-        self.ro = brain_step({"sugar": sugar, "loom": loom,
-                              "walk_vis": walk_vis, "turn_vis": turn_vis}, int(P["steps"]))
+        gi = 0.75 + 0.50 * self.interest      # 有兴趣时对同一刺激反应更强(注意力增益)
+        self.ro = brain_step({"sugar": sugar * gi, "loom": loom * gi,
+                              "walk_vis": walk_vis * gi, "turn_vis": turn_vis * gi},
+                             int(P["steps"]))
 
         stress = max(d[k] for k in BASE)
         best, bs, bsrc = None, 0.0, ""
@@ -258,13 +275,18 @@ class Char:
                 elif self.rng.random() < 0.25: wd["flies_near"] += 1
             elif best == "court":
                 self.court_log.append((self.t, BEH["court"][3]))    # 记录求偶时长
+                self.interest_boost = min(1.0, self.interest_boost + 0.8)  # 求偶=强显著事件
                 if social > 0 or wd["flies_near"] > 0:
                     b["last_mating"] = self.t
             elif best == "explore":
                 b["boredom"] = max(0.0, b["boredom"] - 0.10)
                 wd["novelty"] = max(0.0, wd["novelty"] - 0.35)
-                if self.rng.random() < 0.20: wd["food"] = min(1.0, wd["food"] + 0.04)
-                if self.rng.random() < 0.15: wd["water"] = min(1.0, wd["water"] + 0.04)
+                if self.rng.random() < 0.20:
+                    wd["food"] = min(1.0, wd["food"] + 0.04)
+                    self.interest_boost = min(1.0, self.interest_boost + 0.4)   # 发现食物=显著事件
+                if self.rng.random() < 0.15:
+                    wd["water"] = min(1.0, wd["water"] + 0.04)
+                    self.interest_boost = min(1.0, self.interest_boost + 0.3)
             elif best == "rest": b["fatigue"] = max(0.0, b["fatigue"] - 0.06)
             elif best == "flee":
                 wd["threat"] = max(0.0, wd["threat"] - 0.5)
@@ -273,7 +295,8 @@ class Char:
             relief = sum(max(0.0, before.get(k, 0) - self.drives().get(k, 0)) for k in BEH[best][0])
             a["valence"] = float(np.clip(a["valence"] + 1.8 * relief, -1, 1))
 
-        a["arousal"] += dt / 6.0 * ((0.18 + 0.55 * stress + 0.30 * abs(a["valence"])) - a["arousal"])
+        a["arousal"] += dt / 6.0 * ((0.18 + 0.55 * stress + 0.30 * abs(a["valence"])
+                                     + 0.15 * self.interest) - a["arousal"])
         a["arousal"] = float(np.clip(a["arousal"], 0, 1))
         a["valence"] *= math.exp(-dt / 30.0)
         self.rum *= math.exp(-dt / 8.0)
@@ -286,6 +309,7 @@ class Char:
         vocal = (0.30 + 0.80 * a["arousal"] + 0.70 * abs(a["valence"])
                  + 0.90 * w_lonely * d["lonely"] + 0.60 * d["sexual"]
                  + 0.90 * max(d[k] for k in BASE) + 0.80 * w_bored * d["boredom"]
+                 + 0.35 * self.interest
                  + 0.50 * self.rum)
         self.u_speak += dt / 2.0 * (-self.u_speak + vocal)
         self.u_speak += 0.28 * math.sqrt(dt) * float(self.rng.standard_normal())
@@ -326,6 +350,7 @@ def snapshot(since):
             "d": {k: round(v, 3) for k, v in c.drives().items()},
             "u_speak": round(c.u_speak, 3), "theta": round(c.theta, 3),
             "ci": round(c.ci, 3), "social": round(c.social, 3),
+            "interest": round(c.interest, 3),
             "ro": {k: round(v, 2) for k, v in c.ro.items()},
             "n_act": c.n_act, "n_grounded": c.n_grounded,
             "llm": os.environ.get("FLY_LLM", "mock"),

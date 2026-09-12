@@ -246,11 +246,30 @@ TEMPL = {
 }
 LOCK = threading.Lock()
 
+# 参数默认值集中在这里。reset() 开头就整体拷贝, 所以 theta 的初始化能直接引用 theta0
+# (之前参数是在状态变量之后才赋值的, 导致 reset() 里引用 self.params["theta0"] 直接 AttributeError)。
+DEFAULT_PARAMS = dict(gain=0.65, steps=15, hab=0.7, lo=0.10, hi=0.40,
+                      mh=1.0, mt=1.0, mb=1.0, ml=1.0, mc=1.0, soc=0.0,
+                      mi=1.0,
+                      # 发声门控: 没有任何"目标频率", 只有静息兴奋性 + 适应动力学
+                      ada=1.0,          # 1 = 阈值适应(生物); 0 = 固定阈值(消融对照)
+                      theta0=0.95,      # 基础阈值 θ₀ = 静息兴奋性, 不指定任何速率
+                      k_adapt=1.5,      # 开口后阈值抬升 ∝ sqrt(超出量)
+                      tau_adapt=15.0,   # 阈值回落时间常数(秒)
+                      adapt_jit=0.8,    # 抬升量的相对抖动(真实适应是带噪过程)
+                      beta_dn=1.0,      # 下行神经元活动 → 发声驱动 的耦合强度
+                      use=1.0,      # 消融: 0 = LLM 输出只显示、不消费
+                      think=0.0,    # 发声时是否允许模型思考(慢但更丰富)
+                      reply=0.0,    # 1 = 强制回复我的输入(绕过冲动阈值)
+                      run=1.0)
+
+
 class Char:
     def __init__(self):
         self.reset()
 
     def reset(self):
+        self.params = dict(DEFAULT_PARAMS)   # 必须最先: 下面 theta 的初值取自 theta0
         self.t = 0.0; self.tick = 0; self.day = 0.15
         self.body = dict(energy=0.70, hydration=0.70, temp=25.0, fatigue=0.10,
                          boredom=0.05, last_social=0.0, last_mating=0.0, activity=0.0)
@@ -289,20 +308,6 @@ class Char:
         self.n_act = 0; self.n_grounded = 0; self.fps = 0.0
         self.act_hist = {}            # 行为分布(消融对照要用)
         self.rng = np.random.default_rng(7)
-        self.params = dict(gain=0.65, steps=15, hab=0.7, lo=0.10, hi=0.40,
-                           mh=1.0, mt=1.0, mb=1.0, ml=1.0, mc=1.0, soc=0.0,
-                           mi=1.0,
-                           # 发声门控: 没有任何"目标频率", 只有静息兴奋性 + 适应动力学
-                           ada=1.0,          # 1 = 阈值适应(生物); 0 = 固定阈值(消融对照)
-                           theta0=0.95,      # 基础阈值 θ₀ = 静息兴奋性, 不指定任何速率
-                           k_adapt=1.5,      # 开口后阈值抬升 ∝ sqrt(超出量)
-                           tau_adapt=15.0,   # 阈值回落时间常数(秒)
-                           adapt_jit=0.8,    # 抬升量的相对抖动(真实适应是带噪过程)
-                           beta_dn=1.0,      # 下行神经元活动 → 发声驱动 的耦合强度
-                           use=1.0,      # 消融: 0 = LLM 输出只显示、不消费
-                           think=0.0,    # 发声时是否允许模型思考(慢但更丰富)
-                           reply=0.0,    # 1 = 强制回复我的输入(绕过冲动阈值)
-                           run=1.0)
 
     def drives(self):
         b, wd, t = self.body, self.world, self.t

@@ -265,9 +265,33 @@ DEFAULT_PARAMS = dict(gain=0.65, steps=15, hab=0.7, lo=0.10, hi=0.40,
                       adapt_jit=0.4,    # 抬升量的相对抖动(真实适应是带噪过程)
                       beta_dn=1.0,      # 下行神经元活动 → 发声驱动 的耦合强度(可调大)
                       use=1.0,      # 消融: 0 = LLM 输出只显示、不消费
+                      hist_n=8,     # 随状态包发给模型的最近对话条数(0 = 不发)
                       think=0.0,    # 发声时是否允许模型思考(慢但更丰富)
                       reply=0.0,    # 1 = 强制回复我的输入(绕过冲动阈值)
                       run=1.0)
+
+
+def merge_chat_history(external, says, n=8, max_chars=120):
+    """把「听到的」和「说过的」按时间合并成一段对话记录, 只取最近 n 条。
+
+    为什么要合并: 状态包里 recent_says 和 heard_from_outside 是两个分开的列表,
+    模型看不出"你一句我一句"的交替关系, 也就接不上对话的走向。
+    截断策略分两层: 先按时间排序取最近 n 条(条数上限), 每条再截到 max_chars
+    (单条长度上限) —— 否则包体会随对话历史无限增长(实测延迟从 1.6s 爬到 6.7s)。
+    """
+    items = []
+    for m in external or ():
+        items.append((float(m.get("t") or 0.0), "对方", str(m.get("text") or "")))
+    for s in says or ():
+        items.append((float(s.get("t") or 0.0), "我", str(s.get("say") or "")))
+    items.sort(key=lambda x: x[0])
+    out = []
+    for t, who, text in items:
+        if not text.strip():
+            continue
+        out.append({"t": round(t, 1), "who": who, "text": text[:max_chars]})
+    n = max(0, int(n))
+    return out[-n:] if n else []
 
 
 class Char:
@@ -312,6 +336,7 @@ class Char:
         self.llm_consumed = 0
         self.llm_discarded = 0
         self.n_act = 0; self.n_grounded = 0; self.fps = 0.0
+        self.last_packet = None       # 最近一次发给认知层的状态包(用于观测)
         self.act_hist = {}            # 行为分布(消融对照要用)
         self.rng = np.random.default_rng(7)
 
@@ -356,7 +381,7 @@ class Char:
         旧实现是 `argmax(drives)` 得到一个词再查模板 —— 那样 LLM 无事可做。
         """
         d = self.drives()
-        return {
+        pkt = {
             "t": round(self.t, 1),
             "drives": {k: round(v, 2) for k, v in d.items()},
             "strongest_drive": intent,
@@ -372,15 +397,23 @@ class Char:
                       "flies_near": self.world["flies_near"],
                       "threat": round(self.world["threat"], 2)},
             "connectome_readout_hz": {k: round(v, 1) for k, v in self.ro.items()},
-            "recent_actions": [e["text"].split("<")[0].strip()
+            # 对话历史: 听到的与说过的按时间合并, 只取最近 hist_n 条(每条再截长度)。
+            # 这是模型唯一能看到"你一句我一句"的地方。
+            "chat_history": merge_chat_history(self.external, self.says,
+                                               self.params.get("hist_n", 8)),
+            # 下面几个列表也统一截长度: 它们同样随历史增长, 不截的话包体会越来越大、
+            # 推理延迟跟着爬(实测 1.6s -> 6.7s)。
+            "recent_actions": [e["text"].split("<")[0].strip()[:60]
                                for e in self.events if e["kind"] in ("act", "fb")][-6:],
-            "recent_thoughts": [x["thought"] for x in list(self.thoughts)[-3:]],
-            "recent_says": [x["say"] for x in list(self.says)[-3:]],
-            "heard_from_outside": [m["text"] for m in list(self.external)[-3:]],
+            "recent_thoughts": [str(x["thought"])[:120] for x in list(self.thoughts)[-3:]],
+            "recent_says": [str(x["say"])[:120] for x in list(self.says)[-3:]],
+            "heard_from_outside": [str(m["text"])[:120] for m in list(self.external)[-3:]],
             # 明确"谁在跟它说话"。缺这一项时模型会拿 flies_near 等数字去猜,
             # 实测后果是猫人设下把对话者当成苍蝇。
             "interlocutor": PROMPTS["who"],
         }
+        self.last_packet = pkt      # 供观测台显示"这次到底发了什么"(含历史与包体大小)
+        return pkt
 
     def hear(self, text: str) -> None:
         """外部消息 = 刺激，不是提示词。
@@ -699,6 +732,11 @@ def snapshot(since):
             "d": {k: round(v, 3) for k, v in c.drives().items()},
             "u_speak": round(c.u_speak, 3), "theta": round(c.theta, 3),
             "vocal": round(c.vocal, 3), "dn": round(c.dn_norm, 3),
+            # 观测: 这次实际发给模型的历史与整包大小(用来验证历史确实被截断、
+            # 以及包体没有随对话历史无限增长)
+            "hist": list((c.last_packet or {}).get("chat_history") or []),
+            "payload_bytes": (len(json.dumps(c.last_packet, ensure_ascii=False))
+                              if c.last_packet else 0),
             "spk_n": len(c.speak_iv) + (1 if c.last_speak_t >= 0 else 0),
             "spk_iv_mean": (round(float(np.mean(c.speak_iv)), 1) if c.speak_iv else None),
             "spk_iv_cv": (round(float(np.std(c.speak_iv) / max(float(np.mean(c.speak_iv)), 1e-9)), 2)

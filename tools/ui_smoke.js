@@ -67,7 +67,7 @@ const mk = id => (reg[id] = Object.assign(new El(), {id}));
 // 滑块由 buildControls() 生成，假环境要预注册
 ['gain','steps','hab','lo','hi','mh','mt','mb','mi','ml','mc','soc',
  'theta0','k_adapt','tau_adapt','adapt_jit','beta_dn','ada',
- 'use','think','reply'].forEach(k => { mk('p_' + k); mk('v_' + k); });
+ 'use','think','reply','hist_n'].forEach(k => { mk('p_' + k); mk('v_' + k); });
 
 const document = {
   getElementById: id => reg[id] || null,
@@ -85,6 +85,8 @@ const state = {
   ro: {eat: 12.5, flee: 0.0, approach: 33.3, explore: 5.1},
   interest: 0.42, social: 0.0, ci: 0.05, u_speak: 1.1, theta: 1.05,
   vocal: 0.68, dn: 0.21, spk_n: 41, spk_iv_mean: 23.2, spk_iv_cv: 0.49,
+  hist: [{t: 90, who: '对方', text: '你在干嘛？'}, {t: 95.5, who: '我', text: '饿。'}],
+  payload_bytes: 3120,
   appr: {novelty: 0.9, threat: 0.1, control: 0.7}, appr_active: true, want: 'explore',
   llm: {think_mode: 'kwargs', busy: false, calls: 3, done: 3, stale: 0,
         rejected: 0, tokens: 120, last_ms: 1500, err: ''},
@@ -92,7 +94,7 @@ const state = {
   affect: {valence: 0.2, arousal: 0.5},
   params: Object.fromEntries([...['gain','steps','hab','lo','hi','mh','mt','mb','mi','ml','mc','soc',
         'theta0','k_adapt','tau_adapt','adapt_jit','beta_dn','ada',
-        'use','think','reply','run'].map((k, i) => [k, i === 0 ? 0.65 : 0])]),
+        'use','think','reply','hist_n','run'].map((k, i) => [k, i === 0 ? 0.65 : 0])]),
   seq: 6, reply_mode: 1, unanswered: 1,
   prompts: {system: '你是一只果蝇。{"thought": "", "say": ""}', channel: '只输出一个很短的中文句子。',
             who: '一个人类观察者（不是你的同类，也不是昆虫）',

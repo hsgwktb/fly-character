@@ -288,6 +288,7 @@ const SPEC = [
     ['use', '消费 LLM 输出', 0, 1, 1, '0 = 消融：只显示不改变行为'],
     ['think', '发声时允许思考', 0, 1, 1, '更丰富但慢得多'],
     ['reply', '强制回复我的输入', 0, 1, 1, '1 = 绕过冲动阈值，收到消息就回；0 = 主动模式，回不回由它'],
+    ['hist_n', '历史对话条数', 0, 20, 1, '随状态包一起发给模型；0 = 不发。太长会拖慢推理'],
   ]],
 ];
 const PKEYS = SPEC.flatMap(g => g[1].map(x => x[0]));
@@ -460,6 +461,8 @@ function push(s){
     '<span>想做</span><b>' + s.want + '</b>' +
     '<span>消费 / 丢弃</span><b>' + s.llm_consumed + ' / ' + s.llm_discarded + '</b>' +
     '<span>待生成</span><b>' + s.llm_pending + '</b>' +
+    '<span>发给模型的历史</span><b>' + ((s.hist || []).length) + ' 条 / 整包 ' +
+      (s.payload_bytes ? (s.payload_bytes / 1024).toFixed(1) + ' KB' : '—') + '</b>' +
     '<span>模型</span><b>' + (ll.model || 'qwen3.8-27b-uncensored') + '</b>' +
     (ll.err ? '<span>错误</span><b style="color:#ff6b6b">' + String(ll.err).slice(0,70) + '</b>' : '');
 

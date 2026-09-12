@@ -189,7 +189,7 @@ class Char:
         wd["humidity"] = float(np.clip(wd["humidity"], 0.05, 0.98))
         wd["food"] = min(1.0, wd["food"] + dt * 0.0015)
         wd["water"] = min(1.0, wd["water"] + dt * 0.0020)
-        wd["novelty"] += dt * 0.006 * (1.0 - wd["novelty"])
+        wd["novelty"] = float(np.clip(wd["novelty"] - dt * 0.008, 0.0, 1.0))   # 环境熟悉化
         wd["threat"] = max(0.0, wd["threat"] - dt * 0.05)
         if self.rng.random() < dt * 0.030:
             wd["threat"] = min(1.0, wd["threat"] + 0.5 + 0.4 * float(self.rng.random()))
@@ -206,13 +206,13 @@ class Char:
         # ---- 兴趣(相位性, τ≈4s) 与 无聊(累积量, τ≈70s): 相对但不同 ----
         # 兴趣由"环境里有多少可看的"加上显著事件的瞬时抬升驱动;
         # 无聊则是慢积累的亏缺 —— 没兴趣时涨得快, 有兴趣时被缓解。
-        base_i = 0.15 + 0.85 * float(np.clip(wd["novelty"], 0, 1))
+        base_i = 0.06 + 0.30 * float(np.clip(wd["novelty"], 0, 1))
         self.interest += dt / 4.0 * (min(1.0, base_i + self.interest_boost) - self.interest)
         self.interest = float(np.clip(self.interest, 0.0, 1.0))
         self.interest_boost *= math.exp(-dt / 6.0)
         b["boredom"] = float(np.clip(
-            b["boredom"] + dt * (0.018 * (1.0 - 0.85 * self.interest) * (1 - 0.5 * a["arousal"])
-                                 - 0.008 * P["mi"] * self.interest), 0.0, 1.0))
+            b["boredom"] + dt * (0.016 * (1.0 - 0.6 * self.interest) * (1 - 0.5 * a["arousal"])
+                                 - 0.004 * P["mi"] * self.interest), 0.0, 1.0))
         b["activity"] *= math.exp(-dt / 3.0)
         for k in self.hab:
             self.hab[k] *= math.exp(-dt / 20.0)
@@ -227,7 +227,7 @@ class Char:
         social = 1.0 if wd["flies_near"] > 0 else 0.0
         social = max(social, float(P["soc"]))      # 人工社交显著性(把一只同类放进视野)
         self.social = social
-        walk_vis = float(np.clip(wd["novelty"], 0, 1)) * (P["lo"] + P["hi"] * min(1.0, P["mb"] * d["boredom"]))
+        walk_vis = P["lo"] + P["hi"] * min(1.0, P["mb"] * d["boredom"])
         turn_vis = social * (P["lo"] + P["hi"] * min(1.0, P["ml"] * d["lonely"]))
         gi = 0.75 + 0.50 * self.interest      # 有兴趣时对同一刺激反应更强(注意力增益)
         self.ro = brain_step({"sugar": sugar * gi, "loom": loom * gi,
@@ -280,7 +280,7 @@ class Char:
                     b["last_mating"] = self.t
             elif best == "explore":
                 b["boredom"] = max(0.0, b["boredom"] - 0.10)
-                wd["novelty"] = max(0.0, wd["novelty"] - 0.35)
+                wd["novelty"] = min(1.0, wd["novelty"] + 0.35)   # 探索发现新东西 -> 新颖度回升
                 if self.rng.random() < 0.20:
                     wd["food"] = min(1.0, wd["food"] + 0.04)
                     self.interest_boost = min(1.0, self.interest_boost + 0.4)   # 发现食物=显著事件

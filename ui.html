@@ -167,6 +167,7 @@
       <canvas id="c_spk" height="104"></canvas>
       <div class="legend"><span><i style="background:#8b93a7"></i>θ 阈值</span>
         <span><i style="background:#ffd166"></i>u_speak</span></div>
+      <div class="kv" id="spkkv" style="margin-top:7px"></div>
     </div>
 
     <div class="panel">
@@ -273,10 +274,13 @@ const SPEC = [
     ['mc', '性欲→求偶倍率', 0, 3, 0.1, ''],
     ['soc', '人工社交显著性', 0, 1, 0.05, '把一只同类放进视野'],
   ]],
-  ['说话门控', [
-    ['sr', '静息发声间隔 秒/次', 3, 120, 1, '越小越话多；内驱力强时自动变短'],
-    ['kp', '阈值积分增益 κ', 0, 6, 0.25, '越大越强地维持目标率'],
-    ['ada', '自适应阈值', 0, 1, 1, '置 0 复现固定阈值病态'],
+  ['说话门控（无目标频率）', [
+    ['theta0', '基础阈值 θ₀', 0.2, 2, 0.05, '静息兴奋性；不指定任何速率'],
+    ['k_adapt', '适应抬升 ∝√超出量', 0, 4, 0.1, '越大越容易"说累"，间隔变长'],
+    ['tau_adapt', '适应回落 τ（秒）', 2, 120, 1, '越大越"记得"刚说过话'],
+    ['adapt_jit', '适应抖动', 0, 1, 0.05, '让间隔呈宽分布，而不是节拍器'],
+    ['beta_dn', '下行神经元→发声', 0, 3, 0.05, '连接组活动对发声的贡献；置 0 可对照'],
+    ['ada', '阈值适应', 0, 1, 1, '0 = 消融：关掉适应，阈值固定'],
   ]],
   ['认知层', [
     ['use', '消费 LLM 输出', 0, 1, 1, '0 = 消融：只显示不改变行为'],
@@ -436,6 +440,16 @@ function push(s){
     ? ('强制回复模式' + (s.unanswered ? ' · 待回复 ' + s.unanswered : ' · 已回完'))
     : '主动模式：消息只当刺激，不保证它回应';
   dlg.className = forced ? 'tag g' : 'tag';
+
+  // 发声门控读数：CV 直接告诉你它是不是节拍器（伺服控制会趋近 0）
+  const cv = s.spk_iv_cv;
+  const cvBad = (cv != null && cv < 0.15);
+  document.getElementById('spkkv').innerHTML =
+    '<span>发声间隔均值</span><b>' + (s.spk_iv_mean == null ? '—' : s.spk_iv_mean + ' s') + '</b>' +
+    '<span>间隔变异系数 CV</span><b style="color:' + (cvBad ? '#ff6b6b' : 'var(--fg)') + '">' +
+      (cv == null ? '（样本不足）' : cv) + (cvBad ? ' ← 接近节拍器' : '') + '</b>' +
+    '<span>下行神经元项 dn</span><b>' + (s.dn == null ? '—' : s.dn) + '</b>' +
+    '<span>发声驱动 vocal</span><b>' + (s.vocal == null ? '—' : s.vocal) + '</b>';
 
   // 认知面板
   document.getElementById('cogkv').innerHTML =

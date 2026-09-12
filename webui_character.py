@@ -21,8 +21,6 @@ from fly_llm import (FlyLLM, _post as llm_post,
 OUT = os.environ.get("FLY_DATA", "/content/fly/normalized")
 UI_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui.html")
 PORT = int(os.environ.get("FLY_UI_PORT", "8000"))
-# 最短发声间隔(秒/次): 1/0.30 ≈ 3.33 s, 等价于"目标发声率 ≤ 0.30 次/秒"的旧上限
-MIN_SAY_INTERVAL = 1.0 / 0.30
 LLM = FlyLLM()          # 认知层；不可用时自动降级为模板发声
 
 # ------------------------------------------------------------------ 提示词
@@ -172,6 +170,9 @@ SENSE = {
 GROUND = {"eat": ("MN9", 55.0), "flee": ("DNp01", 280.0),
           "approach": ("DNp20", 120.0), "explore": ("DNp09", 120.0)}
 MOTOR = {b: sel(lambda s, n=nm: s.eq(nm)) for b, (nm, _) in GROUND.items()}
+# 下行神经元: flee=DNp01(巨纤维) / approach=DNp20(转向) / explore=DNp09(行走)。
+# 不含 eat=MN9 —— 那是腹神经索里的运动神经元, 不是"大脑向身体下命令"的通道。
+DN_KEYS = ("flee", "approach", "explore")
 
 V0 = -52.0; VR = -52.0; VTH = -45.0
 T_MBR = 20.0; TAU_SYN = 5.0; T_RFC = 2.2; T_DLY = 1.8
@@ -260,9 +261,12 @@ class Char:
         self.cooldown = {b: 0.0 for b in BEH}
         self.urges = {b: 0.0 for b in BEH}
         self.ro = {b: 0.0 for b in GROUND}
-        self.u_speak = 0.0; self.theta = 1.0; self.refr = 0.0; self.rum = 0.0
+        self.u_speak = 0.0; self.theta = float(self.params["theta0"]); self.refr = 0.0; self.rum = 0.0
+        self.vocal = 0.0; self.dn_norm = 0.0          # 诊断: 发声驱动 / 脑活动项
         self.reply_refr = 0.0         # 强制回复的独立不应期(短)
-        self.speak_times = deque(); self.events = []; self.seq = 0
+        self.last_speak_t = -1.0            # 发声间隔统计: 只用于观测, 不参与控制
+        self.speak_iv = deque(maxlen=40)
+        self.events = []; self.seq = 0
         self.court_log = deque()      # (起始时刻, 持续时长) -> 用于算求偶指数
         self.ci = 0.0                 # 求偶指数: 近 60s 处于求偶行为的时间占比
         self.social = 0.0             # 社交显著性(视野内有无同类)
@@ -287,7 +291,14 @@ class Char:
         self.rng = np.random.default_rng(7)
         self.params = dict(gain=0.65, steps=15, hab=0.7, lo=0.10, hi=0.40,
                            mh=1.0, mt=1.0, mb=1.0, ml=1.0, mc=1.0, soc=0.0,
-                           mi=1.0, sr=20.0, kp=2.0, ada=1.0,   # sr: 静息发声间隔(秒/次)
+                           mi=1.0,
+                           # 发声门控: 没有任何"目标频率", 只有静息兴奋性 + 适应动力学
+                           ada=1.0,          # 1 = 阈值适应(生物); 0 = 固定阈值(消融对照)
+                           theta0=0.95,      # 基础阈值 θ₀ = 静息兴奋性, 不指定任何速率
+                           k_adapt=1.5,      # 开口后阈值抬升 ∝ sqrt(超出量)
+                           tau_adapt=15.0,   # 阈值回落时间常数(秒)
+                           adapt_jit=0.8,    # 抬升量的相对抖动(真实适应是带噪过程)
+                           beta_dn=1.0,      # 下行神经元活动 → 发声驱动 的耦合强度
                            use=1.0,      # 消融: 0 = LLM 输出只显示、不消费
                            think=0.0,    # 发声时是否允许模型思考(慢但更丰富)
                            reply=0.0,    # 1 = 强制回复我的输入(绕过冲动阈值)
@@ -561,37 +572,39 @@ class Char:
         self.rum *= math.exp(-dt / 8.0)
 
         # ---- 想说话阈值门控 ----
+        # ---- 想说话阈值门控 ----
+        # 这里不再有任何目标速率。阈值只做两件事: 开口时按 sqrt(超出量) 抬升(适应),
+        # 其余时间向基础阈值 θ₀ 回落。频率是"驱动/噪声/适应"相互作用的结果 ——
+        # 代码里没有任何地方写着"每 N 秒说一句"。
         sat = float(np.clip(1.0 - stress / 0.35, 0, 1))
         boost = 1.0 + 1.8 * sat
         w_bored = boost
         w_lonely = boost * (0.30 + 0.70 * d["boredom"])
-        vocal = (0.30 + 0.80 * a["arousal"] + 0.70 * abs(a["valence"])
-                 + 0.90 * w_lonely * d["lonely"] + 0.60 * d["sexual"]
-                 + 0.90 * max(d[k] for k in BASE) + 0.80 * w_bored * d["boredom"]
-                 + 0.35 * self.interest
-                 + 0.60 * self.vocal_bump
-                 + 0.50 * self.rum)
-        self.u_speak += dt / 2.0 * (-self.u_speak + vocal)
+
+        # 连接组项: 下行神经元(DNp01 逃逸 / DNp20 转向 / DNp09 行走)的归一化总放电。
+        # DN 是果蝇"向身体下命令"的通道, 它的活动就是大脑自己的行动准备度。
+        # 大脑安静 -> 这一项低 -> 它就不爱开口: 静默是脑状态的结果, 不是参数的结果。
+        self.dn_norm = float(sum(min(1.0, self.ro[k] / GROUND[k][1]) for k in DN_KEYS)
+                             / len(DN_KEYS))
+
+        self.vocal = (0.30 + 0.80 * a["arousal"] + 0.70 * abs(a["valence"])
+                      + 0.90 * w_lonely * d["lonely"] + 0.60 * d["sexual"]
+                      + 0.90 * max(d[k] for k in BASE) + 0.80 * w_bored * d["boredom"]
+                      + 0.35 * self.interest
+                      + 0.60 * self.vocal_bump
+                      + 0.50 * self.rum
+                      + P["beta_dn"] * self.dn_norm)
+        self.u_speak += dt / 2.0 * (-self.u_speak + self.vocal)
         self.u_speak += 0.28 * math.sqrt(dt) * float(self.rng.standard_normal())
         self.u_speak = max(0.0, self.u_speak)
-        soc = max(d["lonely"], d["sexual"])
-        # sr 是"静息发声间隔"(秒/次): 越大越沉默; 内驱力强时目标间隔自动变短。
-        # 内层 max 兜住"比上限还快"的设置, 外层 min 是发声率 0.30 次/秒 的封顶;
-        # sr<=0 按旧语义(旧参数是发声率)视为沉默。
-        sr_interval = float(P["sr"])
-        if sr_interval <= 0:
-            target = 0.0
-        else:
-            target = min((1.0 + 2.5 * stress + 1.5 * soc) / max(sr_interval, MIN_SAY_INTERVAL),
-                         1.0 / MIN_SAY_INTERVAL)
+
+        theta0 = float(P["theta0"])
         if P["ada"] > 0.5:
-            while self.speak_times and self.t - self.speak_times[0] > 30.0:
-                self.speak_times.popleft()
-            rate = len(self.speak_times) / 30.0
-            self.theta += dt * (P["kp"] * (rate - target) - (self.theta - 1.0) / 200.0)
-            self.theta = float(np.clip(self.theta, 0.25, 6.0))
+            # 适应: 只向基础阈值回落(抬升发生在"开口"那一刻, 见下面 self.theta += ...)
+            self.theta += dt * (-(self.theta - theta0) / max(float(P["tau_adapt"]), 1e-3))
+            self.theta = float(np.clip(self.theta, 0.20, 8.0))
         else:
-            self.theta = 1.0
+            self.theta = theta0            # 消融: 关掉适应, 阈值固定
         if self.refr > 0:
             self.refr = max(0.0, self.refr - dt)
         # ---- 强制回复模式：有新消息就绕过冲动阈值直接回 ----
@@ -611,7 +624,8 @@ class Char:
                 pending = m
                 break
 
-        if pending is None and self.refr <= 0 and self.u_speak > self.theta:
+        if (pending is None and self.refr <= 0 and not LLM.busy
+                and self.u_speak > self.theta):
             strongest = max(d, key=lambda k: d[k])
             key = strongest if d[strongest] > 0.15 else "calm"
             if os.environ.get("FLY_USE_LLM", "1") == "1":
@@ -620,13 +634,24 @@ class Char:
                 LLM.request(self.build_packet(key), tag="speak",
                             allow_think=bool(P.get("think", 0.0) > 0.5))
                 self.ev("think", "… <span class='stat'>认知层生成中 (最强内驱力=%s)</span>" % key)
-                self.refr = 25.0      # 不应期必须覆盖生成延迟, 否则请求会堆积
+                # 不应期不再是写死的 25s —— 那会把发声上限钉成"每 25 秒一次"(实测 CV=0.00)。
+                # 改成覆盖上一次真实生成耗时的 2 倍: 这是防请求堆积的工程护栏, 不是发声节奏。
+                gen = max(0.6, LLM.t_last_ms / 1000.0)
+                self.refr = max(1.5, 2.0 * gen)
             else:
                 txt = str(self.rng.choice(TEMPL.get(key, TEMPL["calm"])))
                 self.ev("spk", "「%s」 <span class='badge f'>模板</span>" % txt)
-                self.refr = 5.0
-            self.speak_times.append(self.t)
-            self.theta += 0.15
+                self.refr = 1.5
+            # 适应: 开口把阈值抬起来, 抬升量 ∝ sqrt(超出量)。驱动越强适应越强(亚线性),
+            # 所以强驱动下间隔不会塌到不应期上(那会退回节拍器), 同时保持"需求强就说得勤"。
+            if P["ada"] > 0.5:
+                excess = max(0.0, self.u_speak - float(P["theta0"]))
+                jump = float(P["k_adapt"]) * math.sqrt(excess)
+                self.theta += max(0.0, jump * (1.0 + float(P["adapt_jit"])
+                                               * (2.0 * self.rng.random() - 1.0)))
+            if self.last_speak_t >= 0:
+                self.speak_iv.append(self.t - self.last_speak_t)
+            self.last_speak_t = self.t
             self.u_speak = 0.0
 
         if pending is not None and self.reply_refr <= 0:
@@ -659,6 +684,11 @@ def snapshot(since):
             "t": round(c.t, 1), "tick": c.tick, "fps": round(c.fps, 1),
             "d": {k: round(v, 3) for k, v in c.drives().items()},
             "u_speak": round(c.u_speak, 3), "theta": round(c.theta, 3),
+            "vocal": round(c.vocal, 3), "dn": round(c.dn_norm, 3),
+            "spk_n": len(c.speak_iv) + (1 if c.last_speak_t >= 0 else 0),
+            "spk_iv_mean": (round(float(np.mean(c.speak_iv)), 1) if c.speak_iv else None),
+            "spk_iv_cv": (round(float(np.std(c.speak_iv) / max(float(np.mean(c.speak_iv)), 1e-9)), 2)
+                          if len(c.speak_iv) >= 3 else None),
             "ci": round(c.ci, 3), "social": round(c.social, 3),
             "interest": round(c.interest, 3),
             "ro": {k: round(v, 2) for k, v in c.ro.items()},
@@ -759,6 +789,7 @@ class H(BaseHTTPRequestHandler):
                 keep = dict(CH.params)      # 重置时要保留界面设的参数, 否则消融开关会被抹掉
                 CH.__init__()
                 CH.params.update(keep)
+                CH.theta = float(CH.params["theta0"])   # theta 在 __init__ 里按默认 θ₀ 初始化, 回填后要跟上
             self._send(200, b'{"ok":true}')
         elif self.path == "/api/say":
             txt = str(data.get("text", "")).strip()

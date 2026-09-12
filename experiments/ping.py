@@ -1,1 +1,0 @@
-print("PONG", flush=True)

@@ -7,7 +7,7 @@ webui_character.py — 果蝇数字角色的 WebUI 观测台后端
 - HTTP: /  (观测台页面)  /api/state  /api/control  /api/reset
 - 端口 8000 (避开 Colab 自带的 8080), 交给 cloudflared 暴露
 """
-import json, math, os, threading, time
+import json, math, os, subprocess, threading, time, urllib.request
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -15,12 +15,60 @@ import numpy as np
 import pandas as pd
 import torch
 
-from fly_llm import FlyLLM
+from fly_llm import FlyLLM, _post as llm_post
 
 OUT = os.environ.get("FLY_DATA", "/content/fly/normalized")
 UI_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui.html")
 PORT = int(os.environ.get("FLY_UI_PORT", "8000"))
 LLM = FlyLLM()          # 认知层；不可用时自动降级为模板发声
+
+
+def _sh(cmd: str) -> str:
+    try:
+        return subprocess.run(cmd, shell=True, executable="/bin/bash",
+                              capture_output=True, text=True).stdout.strip()
+    except Exception as e:
+        return "ERR " + repr(e)
+
+
+def diag() -> dict:
+    """通过角色网页暴露 Colab 侧状态 —— 桥不稳时的"望远镜"。"""
+    out = {"llm_stats": LLM.stats(), "key_len": len(LLM.key or ""), "url": LLM.url}
+    for f in ("/content/llm_status.txt", "/content/llm_gate.json"):
+        try:
+            out[os.path.basename(f)] = open(f, encoding="utf-8").read().strip()[:500]
+        except Exception:
+            out[os.path.basename(f)] = None
+    out["gpu"] = _sh("nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader")
+    out["procs"] = _sh("ps -eo pid,etime,cmd | grep -E '[l]lama-server|[w]ebui_character' | head -3")
+    try:
+        req = urllib.request.Request("http://127.0.0.1:8081/v1/models",
+                                     headers={"Authorization": "Bearer " + (LLM.key or "")})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            out["models"] = json.loads(r.read().decode())
+    except Exception as e:
+        out["models"] = "ERR " + repr(e)[:200]
+    return out
+
+
+def probe(prompt: str, max_tokens: int = 400, think: bool = False) -> dict:
+    """经公网隧道直连测试认知层（含"关思考是否生效"）。"""
+    payload = {"model": LLM.model,
+               "messages": [{"role": "system", "content": "只输出一个很短的中文句子。"},
+                            {"role": "user", "content": prompt}],
+               "max_tokens": max_tokens, "temperature": 0.7}
+    if not think:
+        payload["chat_template_kwargs"] = {"enable_thinking": False}
+    t0 = time.time()
+    try:
+        data = llm_post(LLM.url + "/chat/completions", payload, LLM.key, 600)
+    except Exception as e:
+        return {"ok": False, "err": repr(e)[:300], "ms": int((time.time() - t0) * 1000)}
+    m = data["choices"][0]["message"]
+    return {"ok": True, "ms": int((time.time() - t0) * 1000),
+            "content": (m.get("content") or "")[:600],
+            "reasoning_chars": len(m.get("reasoning_content") or ""),
+            "usage": data.get("usage")}
 
 # ------------------------------------------------------------------ 连接组
 meta = pd.read_feather(OUT + "/neurons.feather")
@@ -512,6 +560,8 @@ class H(BaseHTTPRequestHandler):
         elif self.path in ("/", "/index.html"):
             with open(UI_PATH, "rb") as fh:
                 self._send(200, fh.read(), "text/html; charset=utf-8")
+        elif self.path.startswith("/api/diag"):
+            self._send(200, json.dumps(diag(), ensure_ascii=False).encode("utf-8"))
         else:
             self._send(404, b"{}")
 
@@ -540,6 +590,11 @@ class H(BaseHTTPRequestHandler):
             with LOCK:
                 CH.hear(str(data.get("text", "")))
             self._send(200, b'{"ok":true}')
+        elif self.path == "/api/probe":
+            r = probe(str(data.get("prompt", "你现在很饿，说一句。")),
+                      int(data.get("max_tokens", 400)),
+                      bool(data.get("think", False)))
+            self._send(200, json.dumps(r, ensure_ascii=False).encode("utf-8"))
         else:
             self._send(404, b"{}")
 

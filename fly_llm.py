@@ -78,7 +78,7 @@ class FlyLLM:
                  deadline=180.0, timeout=600.0):
         self.url = (base_url or os.environ.get("FLY_LLM_URL",
                     "http://127.0.0.1:8081/v1")).rstrip("/")
-        self.key = api_key or os.environ.get("FLY_LLM_KEY", "")
+        self.key = api_key or os.environ.get("FLY_LLM_KEY", "") or self._read_key()
         self.model = model
         self.deadline = deadline
         self.timeout = timeout
@@ -95,6 +95,18 @@ class FlyLLM:
         self.t_last_ms = 0
         self._stop = False
         threading.Thread(target=self._loop, daemon=True).start()
+
+    @staticmethod
+    def _read_key() -> str:
+        """部署脚本把 key 持久化在 /content/api_key.txt；环境变量没给就读它。"""
+        for p in ("/content/api_key.txt", os.path.expanduser("~/api_key.txt")):
+            try:
+                k = open(p).read().strip()
+                if k:
+                    return k
+            except Exception:
+                pass
+        return ""
 
     # ---------- 思考开关：按部署时的闸门验证结果自动选 ----------
     def _detect_think_mode(self) -> str:
@@ -168,7 +180,7 @@ class FlyLLM:
     def _generate(self, job: dict) -> dict:
         packet = job["packet"]
         use_think = job["allow_think"] and self.think_mode != "kwargs"
-        max_tok = 4096 if use_think else 260
+        max_tok = 4096 if use_think else 400
         sysmsg = SYSTEM if (use_think or self.think_mode == "on") else SYSTEM + " /no_think"
 
         payload = {
@@ -182,8 +194,13 @@ class FlyLLM:
         if not use_think:
             if self.think_mode == "kwargs":
                 payload["chat_template_kwargs"] = {"enable_thinking": False}
+            elif self.think_mode == "no_think":
+                pass                       # 已在 system prompt 里加了 /no_think
             else:
                 payload["chat_template_kwargs"] = {"enable_thinking": False}
+        return self._post_and_parse(payload)
+
+    def _post_and_parse(self, payload: dict) -> dict:
         data = _post(self.url + "/chat/completions", payload, self.key, self.timeout)
         msg = data["choices"][0]["message"]
         content = (msg.get("content") or "").strip()
@@ -216,6 +233,7 @@ class FlyLLM:
             "want": want,
             "parse": obj.get("_parse", "ok"),
             "reasoning_len": len(reasoning),
+            "empty_content": (not content),
             "completion_tokens": int(usage.get("completion_tokens") or 0),
         }
 
